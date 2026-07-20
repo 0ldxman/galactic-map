@@ -45,11 +45,17 @@ export class TerritoryRenderer {
   private best = new Float32Array(0);
   private owner = new Int16Array(0);
 
+  // Scratch canvas used to blur each empire's field before thresholding.
+  private blur: HTMLCanvasElement;
+  private bctx: CanvasRenderingContext2D;
+
   constructor() {
     this.field = document.createElement('canvas');
     this.fctx = this.field.getContext('2d', { willReadFrequently: true })!;
     this.out = document.createElement('canvas');
     this.octx = this.out.getContext('2d')!;
+    this.blur = document.createElement('canvas');
+    this.bctx = this.blur.getContext('2d', { willReadFrequently: true })!;
   }
 
   render(
@@ -65,6 +71,8 @@ export class TerritoryRenderer {
       this.field.height = h;
       this.out.width = w;
       this.out.height = h;
+      this.blur.width = w;
+      this.blur.height = h;
     }
     const px = w * h;
     if (this.best.length !== px) {
@@ -91,9 +99,17 @@ export class TerritoryRenderer {
       empireIds.push(empireId);
       empireRgb.push(hexToRgb(empires[empireId].color));
 
-      // Accumulate this empire's influence field (additive within the empire).
-      this.fctx.clearRect(0, 0, w, h);
-      this.fctx.globalCompositeOperation = 'lighter';
+      // Build this empire's influence field as the pixel-wise MAX of its
+      // systems' discs (not the sum). 'lighten' == max, so each pixel's value is
+      // the strongest single nearby system — i.e. the distance to the nearest
+      // owned system. Summing instead would let faint overlapping rims in
+      // no-man's-land add up past the threshold and fragment into speckle.
+      // Discs are opaque greyscale over an opaque black field so the max is
+      // clean (unaffected by alpha compositing).
+      this.fctx.globalCompositeOperation = 'source-over';
+      this.fctx.fillStyle = '#000';
+      this.fctx.fillRect(0, 0, w, h);
+      this.fctx.globalCompositeOperation = 'lighten';
       for (const s of owned) {
         const p = cam.worldToScreen(s.x, s.y);
         const cx = p.x * this.scale;
@@ -101,10 +117,12 @@ export class TerritoryRenderer {
         const r = Math.max(3, s.influence * cam.zoom * this.scale);
         if (cx + r < 0 || cx - r > w || cy + r < 0 || cy - r > h) continue;
         const g = this.fctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-        // Fairly linear falloff -> equal-strength midpoint between two systems.
-        g.addColorStop(0, 'rgba(255,255,255,1)');
-        g.addColorStop(0.6, 'rgba(255,255,255,0.45)');
-        g.addColorStop(1, 'rgba(255,255,255,0)');
+        // Strong across most of the disc, steep at the rim -> the outer contour
+        // is a thin sharp line with no broad near-threshold plateau.
+        g.addColorStop(0, '#ffffff');
+        g.addColorStop(0.7, '#e0e0e0');
+        g.addColorStop(0.9, '#525252');
+        g.addColorStop(1, '#000000');
         this.fctx.fillStyle = g;
         this.fctx.beginPath();
         this.fctx.arc(cx, cy, r, 0, Math.PI * 2);
@@ -112,8 +130,16 @@ export class TerritoryRenderer {
       }
       this.fctx.globalCompositeOperation = 'source-over';
 
+      // Blur the accumulated field so the threshold contour is smooth and
+      // single-valued instead of breaking into speckle where the raw field
+      // ripples right around the threshold near a border.
+      this.bctx.clearRect(0, 0, w, h);
+      this.bctx.filter = 'blur(3px)';
+      this.bctx.drawImage(this.field, 0, 0);
+      this.bctx.filter = 'none';
+
       // Keep, per pixel, the strongest empire (argmax = nearest / midpoint).
-      const fd = this.fctx.getImageData(0, 0, w, h).data;
+      const fd = this.bctx.getImageData(0, 0, w, h).data;
       const best = this.best;
       const owner = this.owner;
       for (let i = 0, p = 0; p < px; i += 4, p++) {
@@ -166,6 +192,35 @@ export class TerritoryRenderer {
         }
         touched.length = 0;
         smooth[y * w + x] = cm > neg ? m : -1;
+      }
+    }
+
+    // Drop tiny disconnected fragments (label each 4-connected region and clear
+    // any smaller than MIN_AREA). These are threshold-noise islands along
+    // contested seams; real territories are far larger.
+    const MIN_AREA = 90;
+    const visited = new Uint8Array(px);
+    const stack: number[] = [];
+    const comp: number[] = [];
+    for (let s = 0; s < px; s++) {
+      if (visited[s] || smooth[s] < 0) continue;
+      const o = smooth[s];
+      comp.length = 0;
+      stack.length = 0;
+      stack.push(s);
+      visited[s] = 1;
+      while (stack.length) {
+        const p = stack.pop()!;
+        comp.push(p);
+        const x = p % w;
+        const y = (p / w) | 0;
+        if (x > 0 && !visited[p - 1] && smooth[p - 1] === o) { visited[p - 1] = 1; stack.push(p - 1); }
+        if (x < w - 1 && !visited[p + 1] && smooth[p + 1] === o) { visited[p + 1] = 1; stack.push(p + 1); }
+        if (y > 0 && !visited[p - w] && smooth[p - w] === o) { visited[p - w] = 1; stack.push(p - w); }
+        if (y < h - 1 && !visited[p + w] && smooth[p + w] === o) { visited[p + w] = 1; stack.push(p + w); }
+      }
+      if (comp.length < MIN_AREA) {
+        for (const p of comp) smooth[p] = -1;
       }
     }
 
