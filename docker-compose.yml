@@ -1,9 +1,6 @@
 services:
   galactic-map:
-    image: galactic-map:latest
-    # In Portainer you can build straight from the repo instead of a prebuilt
-    # image — just uncomment the next line and remove `image:` above:
-    # build: .
+    image: ghcr.io/0ldxman/galactic-map:latest   # замени OWNER/REPO на свой (напр. ghcr.io/davidmezaku/galactic_map)
     container_name: galactic-map
     restart: unless-stopped
     networks:
