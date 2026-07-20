@@ -1,6 +1,6 @@
 import { GalaxyMap, System, Empire, Hyperlane, StarType, MAP_VERSION } from '../model/types';
 import { Rng, makeId } from '../util/rng';
-import { GalaxyShape, densityAt } from './shapes';
+import { GalaxyShape, densityAt, CORE_OUTER, GAP_OUTER } from './shapes';
 import { poissonDisk } from './poisson';
 import { buildGraph } from './graph';
 import { assignEmpires } from './empires';
@@ -41,7 +41,13 @@ export function generateGalaxy(params: GenerateParams): GalaxyMap {
     systemCount
   );
 
-  const edges = buildGraph(points, rng);
+  // Cut any hyperlane that would bridge the empty gap, keeping the black-hole
+  // core isolated from the rest of the galaxy.
+  const gapCut = radius * (CORE_OUTER + GAP_OUTER) / 2;
+  const isCore = points.map((p) => Math.hypot(p.x, p.y) < gapCut);
+  const rawEdges = buildGraph(points, rng);
+  const edges = rawEdges.filter(([a, b]) => isCore[a] === isCore[b]);
+
   const { capitals, owner } = assignEmpires(points, edges, empireCount, rng);
 
   // Build empires first so systems can reference them.
@@ -62,7 +68,7 @@ export function generateGalaxy(params: GenerateParams): GalaxyMap {
     };
   }
 
-  const influence = minDist * 1.45;
+  const influence = minDist * 1.2;
   const systems: Record<string, System> = {};
   const systemIds: string[] = [];
   for (let i = 0; i < points.length; i++) {
@@ -90,6 +96,19 @@ export function generateGalaxy(params: GenerateParams): GalaxyMap {
     const id = makeId('hl');
     hyperlanes[id] = { id, a: systemIds[a], b: systemIds[b] };
   }
+
+  // The supermassive black hole at the galactic centre. Influence 0 so it never
+  // claims territory; it just anchors the core visually.
+  const bhId = makeId('sys');
+  systems[bhId] = {
+    id: bhId,
+    name: 'Galactic Core',
+    x: 0,
+    y: 0,
+    starType: 'blackhole',
+    ownerId: null,
+    influence: 0,
+  };
 
   return {
     version: MAP_VERSION,

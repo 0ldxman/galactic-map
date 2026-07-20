@@ -51,7 +51,7 @@ export function GenerateDialog({ onClose }: { onClose: () => void }) {
           <input
             type="range"
             min={40}
-            max={800}
+            max={2000}
             step={10}
             value={systemCount}
             onChange={(e) => setSystemCount(Number(e.target.value))}

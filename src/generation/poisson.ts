@@ -46,8 +46,19 @@ export function poissonDisk(
     return true;
   };
 
-  // Seed near the centre where density is usually highest.
-  insert({ x: rng.range(-minDist, minDist), y: rng.range(-minDist, minDist) });
+  // Seed with several accepted points scattered across the disc. Seeding a
+  // single central point would fail for shapes with a hollow core (the galactic
+  // gap / ring), where the centre has zero density and sampling would die out.
+  let seeds = 0;
+  for (let tries = 0; tries < 5000 && seeds < 40; tries++) {
+    const x = rng.range(-radius, radius);
+    const y = rng.range(-radius, radius);
+    if (rng.float() > accept(x, y)) continue;
+    if (!fits(x, y)) continue;
+    insert({ x, y });
+    seeds++;
+  }
+  if (points.length === 0) insert({ x: 0, y: 0 });
 
   const k = 25; // candidates per active point
   while (active.length > 0 && points.length < limit) {

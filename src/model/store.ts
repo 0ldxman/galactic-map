@@ -95,7 +95,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       y,
       starType: (opts?.starType as StarType) ?? 'yellow',
       ownerId: opts?.ownerId ?? null,
-      influence: opts?.influence ?? 42,
+      influence: opts?.influence ?? 34,
     };
     set((s) => {
       const map = { ...s.map, systems: { ...s.map.systems, [id]: system } };

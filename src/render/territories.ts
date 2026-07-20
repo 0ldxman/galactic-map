@@ -13,29 +13,41 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 /**
- * Renders Stellaris-style organic territory blobs using a metaball technique:
- * each owned system contributes a soft radial falloff into a scalar field; the
- * field is thresholded so overlapping systems of one empire merge into a single
- * smooth shape, with a bright rim where the field crosses the threshold.
+ * Renders Stellaris-style political borders.
  *
- * The field is computed at a reduced resolution and upscaled, which is both
- * fast and helpfully blurs the edges.
+ * Unlike a naive "paint younger over older" overlay, each pixel is assigned to
+ * the empire whose influence field is *strongest* there (an argmax, not a sum
+ * across empires). Because two neighbouring systems of different empires have
+ * equal-strength fields exactly halfway between them, the border between two
+ * nations naturally falls on the midpoint — just like the game. Systems of the
+ * *same* empire accumulate additively, so their circles merge into one organic
+ * blob with no internal seams.
+ *
+ * The owner map is computed at reduced resolution; fill is drawn very
+ * translucent and every region gets a crisp 2–3px outline where it meets a
+ * different empire or open space.
  */
 export class TerritoryRenderer {
   private field: HTMLCanvasElement;
   private fctx: CanvasRenderingContext2D;
   private out: HTMLCanvasElement;
   private octx: CanvasRenderingContext2D;
-  private scale = 0.5;
+  private scale = 0.75;
 
-  // Field threshold and rim band (0..255 on the accumulated red channel).
-  private readonly THRESHOLD = 96;
-  private readonly RIM = 42;
-  private readonly FILL_ALPHA = 0.3;
+  // Field strength (0..255) a pixel needs before it counts as claimed.
+  private readonly THRESHOLD = 46;
+  // Territory fill opacity — kept low so the map underneath stays readable.
+  private readonly FILL_ALPHA = 0.15;
+  // Outline opacity.
+  private readonly EDGE_ALPHA = 0.95;
+
+  // Reusable buffers (grown as the viewport changes).
+  private best = new Float32Array(0);
+  private owner = new Int16Array(0);
 
   constructor() {
     this.field = document.createElement('canvas');
-    this.fctx = this.field.getContext('2d')!;
+    this.fctx = this.field.getContext('2d', { willReadFrequently: true })!;
     this.out = document.createElement('canvas');
     this.octx = this.out.getContext('2d')!;
   }
@@ -54,8 +66,15 @@ export class TerritoryRenderer {
       this.out.width = w;
       this.out.height = h;
     }
+    const px = w * h;
+    if (this.best.length !== px) {
+      this.best = new Float32Array(px);
+      this.owner = new Int16Array(px);
+    }
+    this.best.fill(0);
+    this.owner.fill(-1);
 
-    // Group owned systems by empire.
+    // Group owned systems by empire and give each empire a stable index.
     const byEmpire = new Map<string, System[]>();
     for (const s of systems) {
       if (!s.ownerId || !empires[s.ownerId]) continue;
@@ -64,24 +83,27 @@ export class TerritoryRenderer {
       byEmpire.set(s.ownerId, arr);
     }
 
-    const result = this.octx.createImageData(w, h);
-    const rd = result.data;
+    const empireIds: string[] = [];
+    const empireRgb: [number, number, number][] = [];
 
+    let ei = 0;
     for (const [empireId, owned] of byEmpire) {
-      const [er, eg, eb] = hexToRgb(empires[empireId].color);
+      empireIds.push(empireId);
+      empireRgb.push(hexToRgb(empires[empireId].color));
 
-      // 1. Accumulate the influence field with additive blending.
+      // Accumulate this empire's influence field (additive within the empire).
       this.fctx.clearRect(0, 0, w, h);
       this.fctx.globalCompositeOperation = 'lighter';
       for (const s of owned) {
         const p = cam.worldToScreen(s.x, s.y);
         const cx = p.x * this.scale;
         const cy = p.y * this.scale;
-        const r = Math.max(4, s.influence * cam.zoom * this.scale);
+        const r = Math.max(3, s.influence * cam.zoom * this.scale);
         if (cx + r < 0 || cx - r > w || cy + r < 0 || cy - r > h) continue;
         const g = this.fctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-        g.addColorStop(0, 'rgba(255,255,255,0.9)');
-        g.addColorStop(0.55, 'rgba(255,255,255,0.28)');
+        // Fairly linear falloff -> equal-strength midpoint between two systems.
+        g.addColorStop(0, 'rgba(255,255,255,1)');
+        g.addColorStop(0.6, 'rgba(255,255,255,0.45)');
         g.addColorStop(1, 'rgba(255,255,255,0)');
         this.fctx.fillStyle = g;
         this.fctx.beginPath();
@@ -90,33 +112,115 @@ export class TerritoryRenderer {
       }
       this.fctx.globalCompositeOperation = 'source-over';
 
-      // 2. Threshold the field into fill + rim, writing empire colour.
+      // Keep, per pixel, the strongest empire (argmax = nearest / midpoint).
       const fd = this.fctx.getImageData(0, 0, w, h).data;
-      for (let i = 0; i < fd.length; i += 4) {
-        const v = fd[i]; // accumulated red channel = field strength
-        if (v < this.THRESHOLD) continue;
-        const rim = v < this.THRESHOLD + this.RIM;
-        if (rim) {
-          // Bright glowing border.
-          rd[i] = Math.min(255, er + 90);
-          rd[i + 1] = Math.min(255, eg + 90);
-          rd[i + 2] = Math.min(255, eb + 90);
-          rd[i + 3] = 235;
+      const best = this.best;
+      const owner = this.owner;
+      for (let i = 0, p = 0; p < px; i += 4, p++) {
+        const v = fd[i]; // red channel == accumulated field strength
+        if (v > best[p]) {
+          best[p] = v;
+          owner[p] = ei;
+        }
+      }
+      ei++;
+    }
+
+    const T = this.THRESHOLD;
+    const K = empireIds.length;
+
+    // Discrete ownership per pixel (empire index, or -1 for open space).
+    const best = this.best;
+    const owner = this.owner;
+    const cell = new Int16Array(px);
+    for (let p = 0; p < px; p++) cell[p] = best[p] >= T ? owner[p] : -1;
+
+    // One majority-filter pass: replace each pixel with the most common owner in
+    // its 3x3 neighbourhood. This dissolves the salt-and-pepper speckle in the
+    // sparse neutral buffers between empires and smooths the border contour.
+    const smooth = new Int16Array(px);
+    const counts = new Int32Array(Math.max(1, K));
+    const touched: number[] = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let neg = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= h) { neg += 3; continue; }
+          for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= w) { neg++; continue; }
+            const lab = cell[ny * w + nx];
+            if (lab < 0) neg++;
+            else {
+              if (counts[lab] === 0) touched.push(lab);
+              counts[lab]++;
+            }
+          }
+        }
+        let m = -1;
+        let cm = 0;
+        for (const t of touched) {
+          if (counts[t] > cm) { cm = counts[t]; m = t; }
+          counts[t] = 0;
+        }
+        touched.length = 0;
+        smooth[y * w + x] = cm > neg ? m : -1;
+      }
+    }
+
+    // Compose the output: translucent fill + crisp outline at region borders.
+    const result = this.octx.createImageData(w, h);
+    const rd = result.data;
+    const fillA = Math.round(255 * this.FILL_ALPHA);
+    const edgeA = Math.round(255 * this.EDGE_ALPHA);
+
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const p = y * w + x;
+        const o = smooth[p];
+        if (o < 0) continue;
+
+        // Border if any 8-neighbour belongs to a different (or no) empire.
+        let border = false;
+        for (let dy = -1; dy <= 1 && !border; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            const no =
+              nx < 0 || ny < 0 || nx >= w || ny >= h
+                ? -1
+                : smooth[ny * w + nx];
+            if (no !== o) {
+              border = true;
+              break;
+            }
+          }
+        }
+
+        const [er, eg, eb] = empireRgb[o];
+        const i = p * 4;
+        if (border) {
+          // Brighter, saturated outline colour.
+          rd[i] = Math.min(255, er + 70);
+          rd[i + 1] = Math.min(255, eg + 70);
+          rd[i + 2] = Math.min(255, eb + 70);
+          rd[i + 3] = edgeA;
         } else {
-          // Territory fill (semi-transparent). Don't stomp an existing rim.
-          if (rd[i + 3] >= 235) continue;
           rd[i] = er;
           rd[i + 1] = eg;
           rd[i + 2] = eb;
-          rd[i + 3] = Math.round(255 * this.FILL_ALPHA);
+          rd[i + 3] = fillA;
         }
       }
     }
 
     this.octx.putImageData(result, 0, 0);
 
-    // 3. Upscale onto the map canvas; smoothing softens the low-res edges.
+    // Upscale onto the map canvas; light smoothing anti-aliases the outline.
     target.imageSmoothingEnabled = true;
+    target.imageSmoothingQuality = 'high';
     target.drawImage(this.out, 0, 0, w, h, 0, 0, cam.viewW, cam.viewH);
   }
 }

@@ -10,6 +10,15 @@ export interface ShapeParams {
 }
 
 /**
+ * Galactic-core geometry (fractions of the galaxy radius). A small dense core
+ * cluster sits at the centre, ringed by an empty gap that isolates it from the
+ * rest of the galaxy — the supermassive black hole region, Stellaris-style.
+ */
+export const CORE_OUTER = 0.085; // core cluster reaches out to here
+export const GAP_OUTER = 0.185; // empty separating ring ends here
+const HOLE_INNER = 0.022; // kept clear right around the black hole itself
+
+/**
  * Density in [0, 1] describing how likely a system is to exist at world
  * position (x, y), with the galaxy centred on the origin. Used as an
  * acceptance probability during Poisson sampling.
@@ -24,6 +33,11 @@ export function densityAt(
   const dist = Math.hypot(x, y);
   if (dist > R) return 0;
   const rNorm = dist / R; // 0 at centre, 1 at edge
+
+  // Carve the central core cluster and the empty gap that isolates it.
+  if (rNorm < HOLE_INNER) return 0; // black hole's immediate vicinity
+  if (rNorm < CORE_OUTER) return 0.7 * (0.85 + rng.float() * 0.3); // core cluster
+  if (rNorm < GAP_OUTER) return 0; // separating gap
 
   switch (p.shape) {
     case 'elliptical': {

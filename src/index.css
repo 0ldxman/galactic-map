@@ -24,51 +24,57 @@ html, body, #root {
 
 .app {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100%;
 }
 
-/* Toolbar */
+/* Toolbar — vertical rail on the left, Photoshop-style */
 .toolbar {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 16px;
-  padding: 8px 14px;
+  gap: 8px;
+  padding: 10px 6px;
+  width: 62px;
+  flex: 0 0 62px;
   background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  flex: 0 0 auto;
+  border-right: 1px solid var(--border);
 }
-.toolbar-title {
-  font-weight: 700;
-  letter-spacing: 0.5px;
+.toolbar-logo {
+  font-size: 22px;
   color: #aeb8ff;
+  line-height: 1;
+  margin-bottom: 4px;
+  text-shadow: 0 0 10px rgba(120,140,255,0.6);
 }
 .toolbar-spacer { flex: 1; }
-.tool-group { display: flex; gap: 6px; }
+.tool-group { display: flex; flex-direction: column; gap: 6px; width: 100%; align-items: center; }
 
 .tool-btn {
-  display: inline-flex;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  justify-content: center;
+  gap: 2px;
+  width: 48px;
+  height: 46px;
+  padding: 0;
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   font-size: 12px;
 }
 .tool-btn:hover { border-color: #3a4062; }
 .tool-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tool-btn.active .tool-key { color: rgba(255,255,255,0.85); }
 .tool-btn.primary { background: #2f9e57; border-color: #2f9e57; color: #fff; }
-.tool-icon { font-size: 13px; }
+.tool-btn.primary .tool-key { color: rgba(255,255,255,0.85); }
+.tool-icon { font-size: 17px; line-height: 1; }
+.tool-key { font-size: 9px; letter-spacing: 0.5px; color: var(--muted); text-transform: uppercase; }
 
 /* Workspace */
-.workspace {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-}
 .canvas-wrap {
   flex: 1 1 0;
   min-width: 0;

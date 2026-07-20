@@ -4,6 +4,21 @@ import { Camera } from '../render/camera';
 import { Renderer } from '../render/renderer';
 
 const HIT_RADIUS = 11; // screen px
+const LINE_HIT = 7; // screen px for hyperlane picking
+
+/** Distance from point (px,py) to the segment (ax,ay)-(bx,by), in screen px. */
+function distToSegment(
+  px: number, py: number,
+  ax: number, ay: number,
+  bx: number, by: number
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
 
 interface DragState {
   mode: 'none' | 'pan' | 'move';
@@ -105,6 +120,26 @@ export function MapCanvas() {
     return best;
   };
 
+  const hitTestHyperlane = (sx: number, sy: number): string | null => {
+    const cam = camRef.current;
+    const { map } = useEditor.getState();
+    let best: string | null = null;
+    let bestD = LINE_HIT;
+    for (const hl of Object.values(map.hyperlanes)) {
+      const a = map.systems[hl.a];
+      const b = map.systems[hl.b];
+      if (!a || !b) continue;
+      const pa = cam.worldToScreen(a.x, a.y);
+      const pb = cam.worldToScreen(b.x, b.y);
+      const d = distToSegment(sx, sy, pa.x, pa.y, pb.x, pb.y);
+      if (d < bestD) {
+        bestD = d;
+        best = hl.id;
+      }
+    }
+    return best;
+  };
+
   const localPos = (e: React.PointerEvent) => {
     const rect = canvasRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -178,7 +213,12 @@ export function MapCanvas() {
         break;
       }
       case 'delete': {
-        if (hit) state.removeSystem(hit);
+        if (hit) {
+          state.removeSystem(hit);
+        } else {
+          const hl = hitTestHyperlane(x, y);
+          if (hl) state.removeHyperlane(hl);
+        }
         drag.mode = 'none';
         break;
       }

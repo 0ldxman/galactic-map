@@ -2,12 +2,12 @@ import { useRef } from 'react';
 import { useEditor, Tool } from '../model/store';
 import { exportToFile, importFromFile } from '../persistence/io';
 
-const TOOLS: { id: Tool; label: string; icon: string; hint: string }[] = [
-  { id: 'select', label: 'Select', icon: '↖', hint: 'Select & move systems / pan' },
-  { id: 'add-system', label: 'Add', icon: '✦', hint: 'Add a star system' },
-  { id: 'connect', label: 'Link', icon: '―', hint: 'Toggle a hyperlane between two systems' },
-  { id: 'paint', label: 'Paint', icon: '◉', hint: 'Assign systems to the active empire' },
-  { id: 'delete', label: 'Delete', icon: '✕', hint: 'Delete a system' },
+const TOOLS: { id: Tool; label: string; icon: string; key: string; hint: string }[] = [
+  { id: 'select', label: 'Select', icon: '↖', key: 'V', hint: 'Select & move systems / pan' },
+  { id: 'add-system', label: 'Add', icon: '✦', key: 'A', hint: 'Add a star system' },
+  { id: 'connect', label: 'Link', icon: '⇄', key: 'L', hint: 'Toggle a hyperlane between two systems' },
+  { id: 'paint', label: 'Paint', icon: '◉', key: 'B', hint: 'Assign systems to the active empire' },
+  { id: 'delete', label: 'Erase', icon: '✕', key: 'E', hint: 'Delete a system or hyperlane' },
 ];
 
 export function Toolbar({ onOpenGenerate }: { onOpenGenerate: () => void }) {
@@ -31,30 +31,48 @@ export function Toolbar({ onOpenGenerate }: { onOpenGenerate: () => void }) {
 
   return (
     <div className="toolbar">
-      <div className="toolbar-title">Galactic Map</div>
+      <div className="toolbar-logo" title="Galactic Map">✷</div>
+
       <div className="tool-group">
         {TOOLS.map((t) => (
           <button
             key={t.id}
             className={`tool-btn${tool === t.id ? ' active' : ''}`}
-            title={t.hint}
+            title={`${t.hint}  (${t.key})`}
             onClick={() => setTool(t.id)}
           >
             <span className="tool-icon">{t.icon}</span>
-            {t.label}
+            <span className="tool-key">{t.key}</span>
           </button>
         ))}
       </div>
+
       <div className="toolbar-spacer" />
+
       <div className="tool-group">
-        <button className="tool-btn primary" onClick={onOpenGenerate}>
-          Generate
+        <button
+          className="tool-btn primary"
+          title="Generate a new galaxy  (G)"
+          onClick={onOpenGenerate}
+        >
+          <span className="tool-icon">✧</span>
+          <span className="tool-key">Gen</span>
         </button>
-        <button className="tool-btn" onClick={() => exportToFile(map)}>
-          Export
+        <button
+          className="tool-btn"
+          title="Export map as JSON"
+          onClick={() => exportToFile(map)}
+        >
+          <span className="tool-icon">↧</span>
+          <span className="tool-key">Exp</span>
         </button>
-        <button className="tool-btn" onClick={() => fileRef.current?.click()}>
-          Import
+        <button
+          className="tool-btn"
+          title="Import map from JSON"
+          onClick={() => fileRef.current?.click()}
+        >
+          <span className="tool-icon">↥</span>
+          <span className="tool-key">Imp</span>
         </button>
         <input
           ref={fileRef}
