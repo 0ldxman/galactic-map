@@ -1,0 +1,15 @@
+services:
+  galactic-map:
+    image: galactic-map:latest
+    # In Portainer you can build straight from the repo instead of a prebuilt
+    # image — just uncomment the next line and remove `image:` above:
+    # build: .
+    container_name: galactic-map
+    restart: unless-stopped
+    networks:
+      - web_network
+    # No `ports:` — NPM reaches it over web_network at http://galactic-map:80
+
+networks:
+  web_network:
+    external: true
