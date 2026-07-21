@@ -11,6 +11,7 @@ import { STATUS_TYPES } from '../model/status';
 import { STAR_SIZES, normalizeStars, makeStarBody } from '../model/stars';
 import { EntityInspector } from './EntityInspector';
 import { Notes } from './Notes';
+import { lighten } from '../util/color';
 
 const BODY_TYPES: StarType[] = ['yellow', 'red', 'blue', 'white', 'neutron'];
 
@@ -18,6 +19,7 @@ export function Inspector() {
   const map = useEditor((s) => s.map);
   const selection = useEditor((s) => s.selection);
   const selectedEntity = useEditor((s) => s.selectedEntity);
+  const activeEmpireId = useEditor((s) => s.activeEmpireId);
   const updateSystem = useEditor((s) => s.updateSystem);
   const updateSystems = useEditor((s) => s.updateSystems);
   const setOwner = useEditor((s) => s.setOwner);
@@ -35,14 +37,70 @@ export function Inspector() {
     .map((id) => map.systems[id])
     .filter(Boolean) as System[];
 
+  // Nothing selected: show the active empire instead of an empty panel. It is
+  // the one thing you always have "in hand", and its lore has to live
+  // somewhere now that the empire list is a bare list in the Outliner.
   if (picked.length === 0) {
+    const emp = activeEmpireId ? map.empires[activeEmpireId] : null;
+    if (!emp) {
+      return (
+        <div className="panel">
+          <div className="panel-header">
+            <span>Nothing selected</span>
+          </div>
+          <div className="empty-hint">
+            Click a system, or drag a box over empty space to select several.
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="panel">
         <div className="panel-header">
-          <span>Inspector</span>
+          <span>Active empire</span>
         </div>
-        <div className="empty-hint">
-          Select a system to edit it. Drag a box over empty space to select many.
+        <label className="field">
+          <span>Name</span>
+          <input
+            value={emp.name}
+            onChange={(e) => updateEmpire(emp.id, { name: e.target.value })}
+          />
+        </label>
+        <div className="btn-row">
+          <label className="opt">
+            <span>Fill</span>
+            <input
+              type="color"
+              value={emp.color}
+              onChange={(e) => updateEmpire(emp.id, { color: e.target.value })}
+            />
+          </label>
+          <label className="opt">
+            <span>Border</span>
+            <input
+              type="color"
+              value={emp.borderColor ?? lighten(emp.color)}
+              onChange={(e) => updateEmpire(emp.id, { borderColor: e.target.value })}
+            />
+          </label>
+        </div>
+        <div className="kv" style={{ marginTop: 6 }}>
+          <span>Systems</span>
+          <b>
+            {Object.values(map.systems).filter((s) => s.ownerId === emp.id).length}
+          </b>
+        </div>
+        <div className="kv">
+          <span>Capital</span>
+          <b>{emp.capitalId ? map.systems[emp.capitalId]?.name ?? '—' : '—'}</b>
+        </div>
+        <Notes
+          value={emp.notes}
+          onChange={(v) => updateEmpire(emp.id, { notes: v })}
+          label="Lore"
+        />
+        <div className="panel-note">
+          Pick a different empire in the Outliner. Click a system to edit it here.
         </div>
       </div>
     );

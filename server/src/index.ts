@@ -40,6 +40,7 @@ import {
   setCursor,
   presenceColor,
   updateAccess,
+  activeUsers,
   flushAll,
   Client,
 } from './rooms';
@@ -71,6 +72,7 @@ function publicMeta(m: MapMeta) {
     owner: userName(m.ownerId),
     ownerId: m.ownerId,
     editors: m.editors.map((id) => ({ id, name: userName(id) })),
+    active: activeUsers(m.id),
     published: m.published,
     viewToken: m.viewToken,
     updatedAt: m.updatedAt,

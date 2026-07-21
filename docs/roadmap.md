@@ -99,6 +99,32 @@ the borders and moving a system no longer rebakes the nebula texture.
   is enforced on the server — a guest socket may watch but its ops are dropped,
   so nothing can be smuggled past the UI.
 
+## Phase F — shell & UI ✅
+
+The sidebar had grown into one endless column mixing server administration with
+"which star is this". Split by how often you look at a thing and why:
+
+- **Routes**: `/login` · `/` dashboard · `/m/:id` editor · `/v/:slug` viewer ·
+  `/local` offline draft. Hand-rolled — four routes don't need a router.
+- **Login page** as the entry point, with an explicit *continue without an
+  account* escape hatch so the app still works with no backend (and in
+  `npm run dev`).
+- **Dashboard**: your maps as cards — published/private, copy-link, delete, and
+  **who is on each board right now** (the map list reports live presence, the
+  page polls it slowly rather than opening a second socket). Creating a map,
+  importing JSON and managing access and invite codes all live here.
+- **Editor** keeps a thin header (back · title · live chip with co-editor dots ·
+  `?`) and a right panel of three tabs:
+  - **Properties** — the selection, or the active empire when nothing is picked;
+  - **Outliner** — everything on the map by category, each category's
+    visibility switch next to the list it hides, plus a search that finally
+    makes systems findable by name;
+  - **Map** — border/label styling, style layers, export, regenerate.
+- **Tool options moved to a strip above the canvas** — they belong to the hand,
+  not the document — and the shortcut list moved to a `?` overlay.
+- The panel is resizable (240–520 px, remembered) and collapses with `Tab`;
+  `F` frames the selection.
+
 ## Phase E — later
 
 - **Planets** — `System.bodies: Planet[]`, shown in a separate System View

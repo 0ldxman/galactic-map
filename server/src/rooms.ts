@@ -59,6 +59,17 @@ export function roomMap(mapId: string): GalaxyMap | null {
   return rooms.get(mapId)?.map ?? readMap(mapId);
 }
 
+/** Who is on a given board right now — shown on the dashboard's map cards. */
+export function activeUsers(mapId: string) {
+  const room = rooms.get(mapId);
+  if (!room) return [];
+  return [...room.clients.values()].map((c) => ({
+    name: c.name,
+    color: c.color,
+    canEdit: c.canEdit,
+  }));
+}
+
 function scheduleSave(room: Room) {
   room.dirty = true;
   if (room.saveTimer) return;

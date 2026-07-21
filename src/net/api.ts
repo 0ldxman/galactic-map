@@ -14,6 +14,8 @@ export interface RemoteMap {
   ownerId: string;
   /** everyone besides the owner who may edit this map */
   editors: { id: string; name: string }[];
+  /** who has the board open right now */
+  active: { name: string; color: string; canEdit: boolean }[];
   published: boolean;
   viewToken: string;
   updatedAt: number;

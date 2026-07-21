@@ -80,6 +80,11 @@ export interface EditorState {
   annotationColor: string;
   /** object being linked by the "link objects" action */
   linkFromId: ID | null;
+  /**
+   * A request to move the camera somewhere (from the outliner, or search).
+   * The canvas owns the camera, so it watches `seq` and acts on a new one.
+   */
+  focusTarget: { x: number; y: number; seq: number } | null;
 
   // --- selection / tools ---
   setTool: (t: Tool) => void;
@@ -90,6 +95,8 @@ export interface EditorState {
   clearSelection: () => void;
   setActiveEmpire: (id: ID | null) => void;
   setConnectFrom: (id: ID | null) => void;
+  /** Ask the canvas to centre on a world position. */
+  focusOn: (x: number, y: number) => void;
   setToolOptions: (
     o: Partial<{
       activeNebulaId: ID | null;
@@ -266,6 +273,7 @@ export const useEditor = create<EditorState>((set, get) => {
     annotationKind: 'text',
     annotationColor: '#e2eaf8',
     linkFromId: null,
+    focusTarget: null,
 
     setTool: (t) => set({ tool: t, connectFromId: null, linkFromId: null }),
 
@@ -289,6 +297,11 @@ export const useEditor = create<EditorState>((set, get) => {
     setActiveEmpire: (id) => set({ activeEmpireId: id }),
     setConnectFrom: (id) => set({ connectFromId: id }),
     setToolOptions: (o) => set(o),
+
+    focusOn: (x, y) =>
+      set((s) => ({
+        focusTarget: { x, y, seq: (s.focusTarget?.seq ?? 0) + 1 },
+      })),
 
     beginTx: () => {
       if (!txOps) txOps = [];

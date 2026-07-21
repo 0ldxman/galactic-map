@@ -105,6 +105,7 @@ export function MapCanvas() {
     const cam = camRef.current;
     let raf = 0;
     let lastPeers = useSync.getState().peers;
+    let lastFocusSeq = 0;
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -121,6 +122,16 @@ export function MapCanvas() {
     const loop = () => {
       const st = useEditor.getState();
       const { map, selection, selectedEntity, connectFromId } = st;
+
+      // Someone asked the camera to go somewhere (outliner, search).
+      if (st.focusTarget && st.focusTarget.seq !== lastFocusSeq) {
+        lastFocusSeq = st.focusTarget.seq;
+        cam.x = st.focusTarget.x;
+        cam.y = st.focusTarget.y;
+        if (cam.zoom < 1.6) cam.zoom = 1.6;
+        didFit.current = true;
+        dirtyRef.current = true;
+      }
 
       // Auto-fit the first time a non-empty map appears.
       if (!didFit.current) {
