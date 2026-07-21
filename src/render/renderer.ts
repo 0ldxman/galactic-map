@@ -97,14 +97,14 @@ export class Renderer {
     }
     ctx.stroke();
 
-    // Star dots. Each star has its own type (colour) & size, so gather all
-    // bodies into per-colour buckets and stroke one path per colour. Positions
-    // and radii are in screen px, so stars do NOT scale with zoom.
-    const BASE_R = 1.8; // base star-dot radius (screen px)
+    // Star dots. Each star has its own type (colour) & size. Sizes & the cluster
+    // layout live in WORLD units and are scaled by zoom, so stars grow when you
+    // move in and shrink into specks when you pull the camera out — like real
+    // objects gaining/losing apparent size with distance.
     const bodyBuckets = new Map<StarType, number[]>();
     for (const list of buckets.values()) {
       for (const sp of list) {
-        for (const pos of layoutStars(sp, BASE_R)) {
+        for (const pos of layoutStars(sp, STAR_WORLD_R, cam.zoom)) {
           let arr = bodyBuckets.get(pos.type);
           if (!arr) { arr = []; bodyBuckets.set(pos.type, arr); }
           arr.push(pos.x, pos.y, pos.r);
@@ -124,7 +124,7 @@ export class Renderer {
 
     // Capitals: their own (brighter) cluster + a ring around the centre.
     for (const sp of capitals) {
-      for (const pos of layoutStars(sp, 2.4)) {
+      for (const pos of layoutStars(sp, CAPITAL_WORLD_R, cam.zoom)) {
         ctx.fillStyle = STAR_COLORS[pos.type];
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, pos.r, 0, Math.PI * 2);
@@ -363,32 +363,43 @@ function clamp(v: number, lo: number, hi: number) {
 
 interface StarDot { x: number; y: number; r: number; type: StarType }
 
+// Base star radii in WORLD units (main-sequence). Multiplied by zoom on screen.
+const STAR_WORLD_R = 4.6;
+const CAPITAL_WORLD_R = 6.2;
+// Never let a star vanish completely when zoomed far out.
+const STAR_MIN_PX = 0.55;
+
 /**
- * Screen positions & radii for a system's stars. The cluster spread scales with
- * the largest star present, so a giant/supergiant pushes its neighbours out
- * instead of covering them; the stored per-star jitter is scaled to that spread.
+ * Screen positions & radii for a system's stars. Radii and the cluster layout
+ * are in world units and multiplied by `zoom`, so stars scale with the camera
+ * (nearer = bigger). The cluster spread scales with the largest star present,
+ * so a giant/supergiant pushes its neighbours out instead of covering them; the
+ * stored per-star jitter is scaled to that spread.
  */
 function layoutStars(
   sp: { s: System; p: { x: number; y: number } },
-  baseR: number
+  baseWorldR: number,
+  zoom: number
 ): StarDot[] {
   const bodies = normalizeStars(sp.s);
   const n = bodies.length;
-  const radii = bodies.map((b) => baseR * (STAR_SIZE_BY_ID[b.size]?.mult ?? 1));
-  let maxR = 0;
-  for (const r of radii) if (r > maxR) maxR = r;
-  // Distance of an offset unit from centre: enough that even two big stars on
-  // opposite sides clear each other.
-  const spread = n <= 1 ? 0 : maxR * 1.35 + 1.6;
-  const jit = spread * 0.4;
+  const radW = bodies.map((b) => baseWorldR * (STAR_SIZE_BY_ID[b.size]?.mult ?? 1));
+  let maxRw = 0;
+  for (const r of radW) if (r > maxRw) maxRw = r;
+  // World-space distance of an offset unit from centre: enough that even two big
+  // stars on opposite sides clear each other.
+  const spreadW = n <= 1 ? 0 : maxRw * 1.35 + baseWorldR * 0.9;
+  const jitW = spreadW * 0.4;
   const out: StarDot[] = [];
   for (let i = 0; i < n; i++) {
     const b = bodies[i];
     const [bx, by] = starBaseOffset(i, n);
+    const ox = bx * spreadW + (n > 1 ? b.jx * jitW : 0);
+    const oy = by * spreadW + (n > 1 ? b.jy * jitW : 0);
     out.push({
-      x: sp.p.x + bx * spread + (n > 1 ? b.jx * jit : 0),
-      y: sp.p.y + by * spread + (n > 1 ? b.jy * jit : 0),
-      r: radii[i],
+      x: sp.p.x + ox * zoom,
+      y: sp.p.y + oy * zoom,
+      r: Math.max(STAR_MIN_PX, radW[i] * zoom),
       type: b.type,
     });
   }
