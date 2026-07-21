@@ -70,7 +70,7 @@ export function MapCanvas() {
     window.addEventListener('resize', resize);
 
     const loop = () => {
-      const { map, selectedSystemId, connectFromId } = useEditor.getState();
+      const { map, revision, selectedSystemId, connectFromId } = useEditor.getState();
 
       // Auto-fit the first time a non-empty map appears.
       if (!didFit.current) {
@@ -91,9 +91,13 @@ export function MapCanvas() {
         rendererRef.current.draw(ctx, map, cam, {
           selectedSystemId,
           connectFromId,
+          revision,
         });
         dirtyRef.current = false;
       }
+      // If a map change is waiting on the territory rebuild throttle, keep the
+      // loop redrawing until it settles.
+      if (rendererRef.current.territory.pending) dirtyRef.current = true;
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);

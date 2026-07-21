@@ -1,4 +1,4 @@
-import { GalaxyMap, STAR_COLORS } from '../model/types';
+import { GalaxyMap, STAR_COLORS, System } from '../model/types';
 import { Camera } from './camera';
 import { TerritoryRenderer } from './territories';
 import { mulberry32 } from '../util/rng';
@@ -6,6 +6,8 @@ import { mulberry32 } from '../util/rng';
 export interface RenderOptions {
   selectedSystemId: string | null;
   connectFromId: string | null;
+  /** store revision — lets the territory cache know when to rebuild */
+  revision: number;
 }
 
 interface BgStar {
@@ -16,78 +18,44 @@ interface BgStar {
   color: string;
 }
 
-interface Nebula {
-  x: number;
-  y: number;
-  r: number;
-  color: string;
-}
+const EMPIRE_LABEL_FONT = `italic 600 %PXpx Georgia, 'Iowan Old Style', 'Times New Roman', serif`;
 
 export class Renderer {
-  private territory = new TerritoryRenderer();
+  readonly territory = new TerritoryRenderer();
   private bgStars: BgStar[] = [];
-  private nebulae: Nebula[] = [];
 
   constructor() {
+    // A cool, sparse starfield in world space (parallaxes with the map).
     const rnd = mulberry32(1234567);
     const span = 4200;
-
-    // A dense, cool-to-warm starfield. Mostly faint white with occasional
-    // coloured stars, plus a handful of bright "hero" stars.
-    const starTints = [
-      '#ffffff', '#ffffff', '#ffffff', '#dfe8ff',
-      '#fff2cc', '#ffd9b3', '#cfe0ff', '#ffe0e6',
-    ];
-    for (let i = 0; i < 2600; i++) {
-      const bright = rnd() < 0.04;
+    const tints = ['#dfe8ff', '#cfe0ff', '#ffffff', '#ffffff', '#e8eeff', '#fff4e0'];
+    for (let i = 0; i < 1300; i++) {
+      const bright = rnd() < 0.05;
       this.bgStars.push({
         x: (rnd() - 0.5) * 2 * span,
         y: (rnd() - 0.5) * 2 * span,
-        r: bright ? rnd() * 1.6 + 1.1 : rnd() * 1.0 + 0.25,
-        a: bright ? rnd() * 0.4 + 0.6 : rnd() * 0.45 + 0.12,
-        color: starTints[(rnd() * starTints.length) | 0],
-      });
-    }
-
-    // Soft coloured nebula clouds scattered through the galaxy (world space,
-    // so they parallax with the map). Muted, varied hues — not a flat blue wash.
-    const nebColors = [
-      'rgba(120,60,150,0.16)', // violet
-      'rgba(40,110,140,0.14)', // teal
-      'rgba(150,60,90,0.12)', // magenta
-      'rgba(60,80,160,0.13)', // indigo
-      'rgba(140,90,50,0.10)', // amber dust
-    ];
-    for (let i = 0; i < 22; i++) {
-      const ang = rnd() * Math.PI * 2;
-      const rad = Math.pow(rnd(), 0.7) * 1500;
-      this.nebulae.push({
-        x: Math.cos(ang) * rad,
-        y: Math.sin(ang) * rad,
-        r: rnd() * 700 + 350,
-        color: nebColors[(rnd() * nebColors.length) | 0],
+        r: bright ? rnd() * 1.4 + 1.0 : rnd() * 0.9 + 0.3,
+        a: bright ? rnd() * 0.4 + 0.5 : rnd() * 0.4 + 0.1,
+        color: tints[(rnd() * tints.length) | 0],
       });
     }
   }
 
-  draw(
-    ctx: CanvasRenderingContext2D,
-    map: GalaxyMap,
-    cam: Camera,
-    opts: RenderOptions
-  ) {
+  draw(ctx: CanvasRenderingContext2D, map: GalaxyMap, cam: Camera, opts: RenderOptions) {
     const { viewW: w, viewH: h } = cam;
 
     this.drawBackground(ctx, cam);
+    this.drawGrid(ctx, cam);
 
     const systems = Object.values(map.systems);
 
-    // Territory blobs beneath everything else.
-    this.territory.render(ctx, systems, map.empires, cam);
+    // Territory raster (rebuilt only when the map changes; blitted here).
+    this.territory.update(systems, map.empires, opts.revision);
+    this.territory.draw(ctx, cam);
 
-    // Hyperlanes.
+    // Hyperlanes — thin schematic circuit lines.
     ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(150,180,220,0.22)';
+    ctx.strokeStyle = 'rgba(140,175,220,0.20)';
     ctx.beginPath();
     for (const hl of Object.values(map.hyperlanes)) {
       const a = map.systems[hl.a];
@@ -100,111 +68,133 @@ export class Renderer {
     }
     ctx.stroke();
 
-    // Systems.
-    const showLabels = cam.zoom > 0.55;
+    // --- Systems: bucket the visible ones and draw each colour in ONE path. ---
+    const margin = 30;
+    const buckets = new Map<string, System[]>();
+    const capitals: { s: System; p: { x: number; y: number } }[] = [];
+    const blackholes: System[] = [];
+    const onScreen: { s: System; p: { x: number; y: number } }[] = [];
+
     for (const s of systems) {
       const p = cam.worldToScreen(s.x, s.y);
-      if (p.x < -40 || p.x > w + 40 || p.y < -40 || p.y > h + 40) continue;
-
-      if (s.starType === 'blackhole') {
-        // The central supermassive core (influence 0) gets the big accretion
-        // disk; ordinary black-hole stars are rendered small.
-        this.drawBlackHole(ctx, p.x, p.y, cam.zoom, s.influence === 0);
-        // Selection ring still applies.
-        if (s.id === opts.selectedSystemId || s.id === opts.connectFromId) {
-          ctx.strokeStyle = s.id === opts.connectFromId ? '#ffe27a' : '#ffffff';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        continue;
-      }
-
-      const color = STAR_COLORS[s.starType];
+      if (p.x < -margin || p.x > w + margin || p.y < -margin || p.y > h + margin) continue;
+      onScreen.push({ s, p });
+      if (s.starType === 'blackhole') { blackholes.push(s); continue; }
       const isCapital = map.empires[s.ownerId ?? '']?.capitalId === s.id;
-      const baseR = isCapital ? 4.5 : 2.8;
+      if (isCapital) { capitals.push({ s, p }); continue; }
+      const arr = buckets.get(s.starType) ?? [];
+      arr.push(s);
+      buckets.set(s.starType, arr);
+    }
 
-      // Glow.
-      const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, baseR * 3.5);
-      glow.addColorStop(0, color);
-      glow.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = glow;
-      ctx.globalAlpha = 0.55;
+    const dotR = 1.9;
+    for (const [starType, list] of buckets) {
+      ctx.fillStyle = STAR_COLORS[starType as keyof typeof STAR_COLORS];
       ctx.beginPath();
-      ctx.arc(p.x, p.y, baseR * 3.5, 0, Math.PI * 2);
+      for (const s of list) {
+        const p = cam.worldToScreen(s.x, s.y);
+        ctx.moveTo(p.x + dotR, p.y);
+        ctx.arc(p.x, p.y, dotR, 0, Math.PI * 2);
+      }
       ctx.fill();
-      ctx.globalAlpha = 1;
+    }
 
-      // Core.
+    // Capitals: brighter dot + ring.
+    for (const { s, p } of capitals) {
+      const color = STAR_COLORS[s.starType];
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, baseR, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, 3.4, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
 
-      if (isCapital) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, baseR + 2.5, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+    for (const s of blackholes) {
+      const p = cam.worldToScreen(s.x, s.y);
+      this.drawBlackHole(ctx, p.x, p.y, cam.zoom, s.influence === 0);
+    }
 
-      // Highlight selection / pending connection endpoint.
-      if (s.id === opts.selectedSystemId || s.id === opts.connectFromId) {
-        ctx.strokeStyle =
-          s.id === opts.connectFromId ? '#ffe27a' : '#ffffff';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, baseR + 6, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+    // Selection / pending-connection highlight.
+    for (const { s, p } of onScreen) {
+      if (s.id !== opts.selectedSystemId && s.id !== opts.connectFromId) continue;
+      ctx.strokeStyle = s.id === opts.connectFromId ? '#ffe27a' : '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 9, 0, Math.PI * 2);
+      ctx.stroke();
+    }
 
-      if (showLabels) {
-        ctx.fillStyle = 'rgba(220,230,245,0.75)';
-        ctx.font = '10px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(s.name, p.x, p.y - baseR - 5);
+    // --- System name labels: only well zoomed in, faded via opacity. ---
+    const sysOp = clamp((cam.zoom - 1.3) / (1.9 - 1.3), 0, 1);
+    if (sysOp > 0.02) {
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(220,230,245,${0.8 * sysOp})`;
+      for (const { s, p } of onScreen) {
+        if (s.starType === 'blackhole') continue;
+        ctx.fillText(s.name, p.x, p.y - 8);
       }
     }
 
-    // Empire capital labels (always visible, larger).
+    // --- Empire labels at region centroids (main territory + each enclave). ---
+    this.drawEmpireLabels(ctx, map, cam);
+  }
+
+  private drawEmpireLabels(ctx: CanvasRenderingContext2D, map: GalaxyMap, cam: Camera) {
+    // Fade out as you zoom IN (they hand off to system labels).
+    const zoomFade = clamp((1.7 - cam.zoom) / (1.7 - 1.0), 0, 1);
+    if (zoomFade <= 0.02) return;
+
     ctx.textAlign = 'center';
-    for (const e of Object.values(map.empires)) {
-      if (!e.capitalId) continue;
-      const cap = map.systems[e.capitalId];
-      if (!cap) continue;
-      const p = cam.worldToScreen(cap.x, cap.y);
-      ctx.fillStyle = e.color;
-      ctx.font = 'bold 13px system-ui, sans-serif';
-      ctx.shadowColor = 'rgba(0,0,0,0.9)';
-      ctx.shadowBlur = 4;
-      ctx.fillText(e.name.toUpperCase(), p.x, p.y - 14);
+    ctx.textBaseline = 'middle';
+    const anyCtx = ctx as unknown as { letterSpacing: string };
+    const prevSpacing = anyCtx.letterSpacing;
+
+    for (const label of this.territory.labels) {
+      const emp = map.empires[label.empireId];
+      if (!emp) continue;
+      const worldR = Math.sqrt(label.area / Math.PI);
+      // Size tracks the region (from the borders), NOT the zoom.
+      const fontPx = clamp(worldR * 0.14, 11, 42);
+      // Hide when the region is too small on screen to hold the label.
+      const screenR = worldR * cam.zoom;
+      const fit = clamp((screenR - fontPx * 0.55) / (fontPx * 0.55), 0, 1);
+      const op = zoomFade * fit;
+      if (op <= 0.03) continue;
+
+      const p = cam.worldToScreen(label.x, label.y);
+      anyCtx.letterSpacing = `${Math.max(1, fontPx * 0.06)}px`;
+      ctx.font = EMPIRE_LABEL_FONT.replace('%PX', String(Math.round(fontPx)));
+
+      ctx.shadowColor = 'rgba(0,0,0,0.85)';
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = withAlpha(emp.color, op);
+      ctx.fillText(emp.name.toUpperCase(), p.x, p.y);
       ctx.shadowBlur = 0;
     }
+
+    anyCtx.letterSpacing = prevSpacing ?? '0px';
+    ctx.textBaseline = 'alphabetic';
   }
 
   /** Accretion disk + event horizon for a black hole. */
   private drawBlackHole(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    zoom: number,
-    big: boolean
+    ctx: CanvasRenderingContext2D, x: number, y: number, zoom: number, big: boolean
   ) {
     const R = big ? Math.max(11, 30 * zoom) : Math.max(2.4, 4 * zoom);
-
-    // Wide reddish gravitational glow.
     const halo = ctx.createRadialGradient(x, y, R * 0.6, x, y, R * 4);
-    halo.addColorStop(0, 'rgba(120,80,180,0.30)');
-    halo.addColorStop(0.5, 'rgba(90,50,140,0.14)');
+    halo.addColorStop(0, 'rgba(120,80,180,0.28)');
+    halo.addColorStop(0.5, 'rgba(90,50,140,0.13)');
     halo.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = halo;
     ctx.beginPath();
     ctx.arc(x, y, R * 4, 0, Math.PI * 2);
     ctx.fill();
 
-    // Accretion disk: hot ring fading inward and outward.
     const disk = ctx.createRadialGradient(x, y, R * 0.9, x, y, R * 2.1);
     disk.addColorStop(0, 'rgba(255,236,190,0)');
     disk.addColorStop(0.35, 'rgba(255,214,150,0.85)');
@@ -215,53 +205,46 @@ export class Renderer {
     ctx.arc(x, y, R * 2.1, 0, Math.PI * 2);
     ctx.fill();
 
-    // Bright inner photon rim.
     ctx.strokeStyle = 'rgba(255,244,220,0.9)';
     ctx.lineWidth = Math.max(1.2, R * 0.12);
     ctx.beginPath();
     ctx.arc(x, y, R * 1.02, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Event horizon (pure black).
     ctx.fillStyle = '#000000';
     ctx.beginPath();
     ctx.arc(x, y, R, 0, Math.PI * 2);
     ctx.fill();
   }
 
+  /** Faint holographic star-chart grid: concentric rings + radial spokes. */
+  private drawGrid(ctx: CanvasRenderingContext2D, cam: Camera) {
+    const c = cam.worldToScreen(0, 0);
+    ctx.strokeStyle = 'rgba(96,132,190,0.07)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let r = 300; r <= 1900; r += 300) {
+      const rr = r * cam.zoom;
+      ctx.moveTo(c.x + rr, c.y);
+      ctx.arc(c.x, c.y, rr, 0, Math.PI * 2);
+    }
+    const maxR = 1950 * cam.zoom;
+    for (let a = 0; a < 360; a += 30) {
+      const rad = (a * Math.PI) / 180;
+      ctx.moveTo(c.x, c.y);
+      ctx.lineTo(c.x + Math.cos(rad) * maxR, c.y + Math.sin(rad) * maxR);
+    }
+    ctx.stroke();
+  }
+
   private drawBackground(ctx: CanvasRenderingContext2D, cam: Camera) {
     const { viewW: w, viewH: h } = cam;
-
-    // Near-black deep-space base with a faint vertical warm/cool shift.
     const bg = ctx.createLinearGradient(0, 0, 0, h);
     bg.addColorStop(0, '#04040a');
     bg.addColorStop(1, '#070510');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, w, h);
 
-    // Coloured nebula clouds (world space -> parallax).
-    for (const n of this.nebulae) {
-      const p = cam.worldToScreen(n.x, n.y);
-      const r = n.r * cam.zoom;
-      if (p.x + r < 0 || p.x - r > w || p.y + r < 0 || p.y - r > h) continue;
-      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
-      g.addColorStop(0, n.color);
-      g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Faint warm glow near the galactic core.
-    const c = cam.worldToScreen(0, 0);
-    const core = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 520 * cam.zoom);
-    core.addColorStop(0, 'rgba(90,70,140,0.18)');
-    core.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = core;
-    ctx.fillRect(0, 0, w, h);
-
-    // Parallax starfield.
     for (const st of this.bgStars) {
       const p = cam.worldToScreen(st.x, st.y);
       if (p.x < 0 || p.x > w || p.y < 0 || p.y > h) continue;
@@ -270,5 +253,24 @@ export class Renderer {
       ctx.fillRect(p.x, p.y, st.r, st.r);
     }
     ctx.globalAlpha = 1;
+
+    // Soft vignette to focus the eye on the map centre.
+    const vig = ctx.createRadialGradient(
+      w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75
+    );
+    vig.addColorStop(0, 'rgba(0,0,0,0)');
+    vig.addColorStop(1, 'rgba(0,0,0,0.45)');
+    ctx.fillStyle = vig;
+    ctx.fillRect(0, 0, w, h);
   }
+}
+
+function clamp(v: number, lo: number, hi: number) {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+
+function withAlpha(hex: string, a: number): string {
+  const h = hex.replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
