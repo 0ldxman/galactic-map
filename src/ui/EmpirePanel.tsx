@@ -1,4 +1,5 @@
 import { useEditor } from '../model/store';
+import { lighten } from '../util/color';
 
 export function EmpirePanel() {
   const map = useEditor((s) => s.map);
@@ -35,9 +36,20 @@ export function EmpirePanel() {
           >
             <input
               type="color"
+              title="Territory fill colour"
               value={e.color}
               onClick={(ev) => ev.stopPropagation()}
               onChange={(ev) => updateEmpire(e.id, { color: ev.target.value })}
+            />
+            <input
+              type="color"
+              className="border-swatch"
+              title="Border colour (defaults to a lighter fill)"
+              value={e.borderColor ?? lighten(e.color)}
+              onClick={(ev) => ev.stopPropagation()}
+              onChange={(ev) =>
+                updateEmpire(e.id, { borderColor: ev.target.value })
+              }
             />
             <input
               className="empire-name"

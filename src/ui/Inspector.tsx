@@ -1,5 +1,5 @@
 import { useEditor } from '../model/store';
-import { StarType, StarBody, STAR_COLORS } from '../model/types';
+import { StarType, StarBody, STAR_COLORS, System } from '../model/types';
 import { MARKER_TYPES } from '../model/markers';
 import { STAR_SIZES, normalizeStars, makeStarBody } from '../model/stars';
 
@@ -7,26 +7,113 @@ const BODY_TYPES: StarType[] = ['yellow', 'red', 'blue', 'white', 'neutron'];
 
 export function Inspector() {
   const map = useEditor((s) => s.map);
-  const selectedSystemId = useEditor((s) => s.selectedSystemId);
+  const selection = useEditor((s) => s.selection);
   const updateSystem = useEditor((s) => s.updateSystem);
+  const updateSystems = useEditor((s) => s.updateSystems);
   const setOwner = useEditor((s) => s.setOwner);
+  const setOwnerMany = useEditor((s) => s.setOwnerMany);
   const removeSystem = useEditor((s) => s.removeSystem);
+  const removeSystems = useEditor((s) => s.removeSystems);
   const updateEmpire = useEditor((s) => s.updateEmpire);
-  const toggleMarker = useEditor((s) => s.toggleMarker);
+  const toggleMarkerMany = useEditor((s) => s.toggleMarkerMany);
 
-  const sys = selectedSystemId ? map.systems[selectedSystemId] : null;
+  const picked = selection
+    .map((id) => map.systems[id])
+    .filter(Boolean) as System[];
 
-  if (!sys) {
+  if (picked.length === 0) {
     return (
       <div className="panel">
         <div className="panel-header">
           <span>Inspector</span>
         </div>
-        <div className="empty-hint">Select a system to edit its properties.</div>
+        <div className="empty-hint">
+          Select a system to edit it. Drag a box over empty space to select many.
+        </div>
       </div>
     );
   }
 
+  // ---- Group editing -------------------------------------------------------
+  if (picked.length > 1) {
+    const ids = picked.map((s) => s.id);
+    const owners = new Set(picked.map((s) => s.ownerId ?? ''));
+    const ownerValue = owners.size === 1 ? [...owners][0] : '__mixed__';
+    const infs = picked.map((s) => s.influence);
+    const infMin = Math.round(Math.min(...infs));
+    const infMax = Math.round(Math.max(...infs));
+
+    return (
+      <div className="panel">
+        <div className="panel-header">
+          <span>{picked.length} systems</span>
+          <button className="mini-btn danger" onClick={() => removeSystems(ids)}>
+            Delete all
+          </button>
+        </div>
+
+        <label className="field">
+          <span>Owner (applies to all)</span>
+          <select
+            value={ownerValue}
+            onChange={(e) => setOwnerMany(ids, e.target.value || null)}
+          >
+            {ownerValue === '__mixed__' && (
+              <option value="__mixed__">— Mixed —</option>
+            )}
+            <option value="">— Neutral —</option>
+            {Object.values(map.empires).map((emp) => (
+              <option key={emp.id} value={emp.id}>
+                {emp.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="field">
+          <span>
+            Influence: {infMin === infMax ? infMin : `${infMin}–${infMax}`}
+          </span>
+          <input
+            type="range"
+            min={10}
+            max={120}
+            value={infMax}
+            onChange={(e) =>
+              updateSystems(ids, { influence: Number(e.target.value) })
+            }
+          />
+        </label>
+
+        <div className="field" style={{ marginTop: 4 }}>
+          <span>Markers (applies to all)</span>
+          <div className="marker-grid">
+            {MARKER_TYPES.map((m) => {
+              const on = picked.every((s) => (s.markers ?? []).includes(m.id));
+              const some = picked.some((s) => (s.markers ?? []).includes(m.id));
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`marker-chip${on ? ' active' : some ? ' partial' : ''}`}
+                  title={m.label}
+                  onClick={() => toggleMarkerMany(ids, m.id)}
+                >
+                  <span className="marker-glyph" style={{ color: m.color }}>
+                    {m.glyph}
+                  </span>
+                  <span className="marker-label">{m.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Single system -------------------------------------------------------
+  const sys = picked[0];
   const isCapital = sys.ownerId
     ? map.empires[sys.ownerId]?.capitalId === sys.id
     : false;
@@ -154,7 +241,7 @@ export function Inspector() {
                 type="button"
                 className={`marker-chip${on ? ' active' : ''}`}
                 title={m.label}
-                onClick={() => toggleMarker(sys.id, m.id)}
+                onClick={() => toggleMarkerMany([sys.id], m.id)}
               >
                 <span className="marker-glyph" style={{ color: m.color }}>
                   {m.glyph}

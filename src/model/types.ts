@@ -1,3 +1,5 @@
+import { DisplaySettings, DEFAULT_DISPLAY } from './display';
+
 export type ID = string;
 
 export type StarType =
@@ -43,7 +45,9 @@ export interface Hyperlane {
 export interface Empire {
   id: ID;
   name: string;
-  color: string; // hex, e.g. "#e0483d"
+  color: string; // hex, e.g. "#e0483d" — territory fill
+  /** Border colour; when absent it is derived from `color` (lightened). */
+  borderColor?: string;
   capitalId: ID | null;
 }
 
@@ -53,6 +57,8 @@ export interface GalaxyMap {
   systems: Record<ID, System>;
   hyperlanes: Record<ID, Hyperlane>;
   empires: Record<ID, Empire>;
+  /** Look of this map; missing keys fall back to DEFAULT_DISPLAY. */
+  display?: DisplaySettings;
 }
 
 export const MAP_VERSION = 1;
@@ -64,6 +70,7 @@ export function emptyMap(seed = 0): GalaxyMap {
     systems: {},
     hyperlanes: {},
     empires: {},
+    display: DEFAULT_DISPLAY,
   };
 }
 

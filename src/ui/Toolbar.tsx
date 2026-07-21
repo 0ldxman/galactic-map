@@ -15,6 +15,10 @@ export function Toolbar({ onOpenGenerate }: { onOpenGenerate: () => void }) {
   const setTool = useEditor((s) => s.setTool);
   const map = useEditor((s) => s.map);
   const setMap = useEditor((s) => s.setMap);
+  const undo = useEditor((s) => s.undo);
+  const redo = useEditor((s) => s.redo);
+  const canUndo = useEditor((s) => s.past.length > 0);
+  const canRedo = useEditor((s) => s.future.length > 0);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const onImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -45,6 +49,27 @@ export function Toolbar({ onOpenGenerate }: { onOpenGenerate: () => void }) {
             <span className="tool-key">{t.key}</span>
           </button>
         ))}
+      </div>
+
+      <div className="tool-group" style={{ marginTop: 8 }}>
+        <button
+          className="tool-btn"
+          title="Undo  (Ctrl+Z)"
+          disabled={!canUndo}
+          onClick={undo}
+        >
+          <span className="tool-icon">↶</span>
+          <span className="tool-key">Undo</span>
+        </button>
+        <button
+          className="tool-btn"
+          title="Redo  (Ctrl+Shift+Z)"
+          disabled={!canRedo}
+          onClick={redo}
+        >
+          <span className="tool-icon">↷</span>
+          <span className="tool-key">Redo</span>
+        </button>
       </div>
 
       <div className="toolbar-spacer" />

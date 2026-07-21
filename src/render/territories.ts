@@ -1,4 +1,5 @@
 import { System, Empire } from '../model/types';
+import { DisplaySettings, DEFAULT_DISPLAY } from '../model/display';
 import { Camera } from './camera';
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -61,17 +62,21 @@ export class TerritoryRenderer {
   private lastBuild = 0;
 
   private readonly THRESHOLD = 46;
-  private readonly FILL_ALPHA = 0.12;
   private readonly FRAGMENT_MIN = 24; // grid cells: drop tiny speckle regions
   private readonly LABEL_MIN = 300; // grid cells: smallest region that gets a name
+
+  /** Display settings the cached regions were coloured with. */
+  private display: DisplaySettings = DEFAULT_DISPLAY;
 
   /** Rebuild the cached borders if the map changed (throttled; skippable). */
   update(
     systems: System[],
     empires: Record<string, Empire>,
     revision: number,
-    defer = false
+    defer = false,
+    display: DisplaySettings = DEFAULT_DISPLAY
   ) {
+    this.display = display;
     if (revision === this.builtRevision) {
       this.pending = false;
       return;
@@ -140,11 +145,24 @@ export class TerritoryRenderer {
     }
     const empireIds: string[] = [];
     const empireRgb: [number, number, number][] = [];
+    const borderRgb: [number, number, number][] = [];
 
     let ei = 0;
     for (const [empireId, list] of byEmpire) {
+      const emp = empires[empireId];
+      const fillRgb = hexToRgb(emp.color);
       empireIds.push(empireId);
-      empireRgb.push(hexToRgb(empires[empireId].color));
+      empireRgb.push(fillRgb);
+      // An explicit border colour wins; otherwise lighten the fill colour.
+      borderRgb.push(
+        emp.borderColor
+          ? hexToRgb(emp.borderColor)
+          : [
+              Math.min(255, fillRgb[0] + 90),
+              Math.min(255, fillRgb[1] + 90),
+              Math.min(255, fillRgb[2] + 90),
+            ]
+      );
 
       // Empire field = pixel-wise MAX of its systems' discs (nearest-system).
       this.fctx.globalCompositeOperation = 'source-over';
@@ -251,14 +269,12 @@ export class TerritoryRenderer {
       const path = this.traceRegion(smooth, rw, rh, e, minX, minY, ppw);
       if (!path) continue;
       const [r, g, b] = empireRgb[e];
-      const br = Math.min(255, r + 90);
-      const bg = Math.min(255, g + 90);
-      const bb = Math.min(255, b + 90);
+      const [br, bg, bb] = borderRgb[e];
       this.regions.push({
         path,
-        fill: `rgba(${r},${g},${b},${this.FILL_ALPHA})`,
+        fill: `rgba(${r},${g},${b},${this.display.fillAlpha})`,
         glow: `rgba(${br},${bg},${bb},0.22)`,
-        edge: `rgba(${br},${bg},${bb},0.95)`,
+        edge: `rgba(${br},${bg},${bb},${this.display.borderAlpha})`,
       });
     }
   }
@@ -351,7 +367,7 @@ export class TerritoryRenderer {
       target.fillStyle = rg.fill;
       target.fill(rg.path, 'evenodd');
     }
-    target.lineWidth = 2 / z;
+    target.lineWidth = this.display.borderWidth / z;
     for (const rg of this.regions) {
       target.strokeStyle = rg.edge;
       target.stroke(rg.path);

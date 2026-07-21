@@ -1,17 +1,29 @@
 import { GalaxyMap, STAR_COLORS, StarType, System } from '../model/types';
 import { MARKER_BY_ID } from '../model/markers';
 import { normalizeStars, starBaseOffset, STAR_SIZE_BY_ID } from '../model/stars';
+import { DisplaySettings, resolveDisplay } from '../model/display';
 import { Camera } from './camera';
 import { TerritoryRenderer } from './territories';
 import { mulberry32 } from '../util/rng';
 
+/** Screen-space rectangle of an in-progress rubber-band selection. */
+export interface Marquee {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 export interface RenderOptions {
-  selectedSystemId: string | null;
+  /** ids of every selected system */
+  selection: readonly string[];
   connectFromId: string | null;
   /** store revision — lets the territory cache know when to rebuild */
   revision: number;
   /** true while dragging a system: skip the (costly) border rebuild until drop */
   deferTerritory?: boolean;
+  /** live rubber-band rectangle, in screen px */
+  marquee?: Marquee | null;
 }
 
 interface BgStar {
@@ -54,15 +66,18 @@ export class Renderer {
 
   draw(ctx: CanvasRenderingContext2D, map: GalaxyMap, cam: Camera, opts: RenderOptions) {
     const { viewW: w, viewH: h } = cam;
+    const dsp = resolveDisplay(map.display);
 
-    this.drawBackground(ctx, cam);
-    this.drawGrid(ctx, cam);
+    this.drawBackground(ctx, cam, dsp);
+    if (dsp.showGrid) this.drawGrid(ctx, cam);
 
     const systems = Object.values(map.systems);
 
     // Territory borders (rebuilt only when the map changes; drawn as vectors).
-    this.territory.update(systems, map.empires, opts.revision, opts.deferTerritory);
-    this.territory.draw(ctx, cam);
+    this.territory.update(
+      systems, map.empires, opts.revision, opts.deferTerritory, dsp
+    );
+    if (dsp.showTerritories) this.territory.draw(ctx, cam);
 
     // --- Systems: cull to the viewport once, reuse the screen positions. ---
     const margin = 30;
@@ -86,23 +101,25 @@ export class Renderer {
     }
 
     // Hyperlanes — thin schematic lines, skipping any fully off-screen.
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(140,175,220,0.20)';
-    ctx.beginPath();
-    for (const hl of Object.values(map.hyperlanes)) {
-      const a = map.systems[hl.a];
-      const b = map.systems[hl.b];
-      if (!a || !b) continue;
-      const pa = cam.worldToScreen(a.x, a.y);
-      const pb = cam.worldToScreen(b.x, b.y);
-      if (pa.x < -margin && pb.x < -margin) continue;
-      if (pa.x > w + margin && pb.x > w + margin) continue;
-      if (pa.y < -margin && pb.y < -margin) continue;
-      if (pa.y > h + margin && pb.y > h + margin) continue;
-      ctx.moveTo(pa.x, pa.y);
-      ctx.lineTo(pb.x, pb.y);
+    if (dsp.showHyperlanes) {
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(140,175,220,0.20)';
+      ctx.beginPath();
+      for (const hl of Object.values(map.hyperlanes)) {
+        const a = map.systems[hl.a];
+        const b = map.systems[hl.b];
+        if (!a || !b) continue;
+        const pa = cam.worldToScreen(a.x, a.y);
+        const pb = cam.worldToScreen(b.x, b.y);
+        if (pa.x < -margin && pb.x < -margin) continue;
+        if (pa.x > w + margin && pb.x > w + margin) continue;
+        if (pa.y < -margin && pb.y < -margin) continue;
+        if (pa.y > h + margin && pb.y > h + margin) continue;
+        ctx.moveTo(pa.x, pa.y);
+        ctx.lineTo(pb.x, pb.y);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
 
     // Star dots. Each star has its own type (colour) & size. Sizes & the cluster
     // layout live in WORLD units and are scaled by zoom, so stars grow when you
@@ -120,18 +137,20 @@ export class Renderer {
     }
     // Additive glow halo under the cores (only for stars big enough on screen
     // to warrant it — far-out specks skip it, which keeps this cheap).
-    ctx.globalCompositeOperation = 'lighter';
-    for (const [type, flat] of bodyBuckets) {
-      const sprite = this.glowSprites[type];
-      if (!sprite) continue;
-      for (let i = 0; i < flat.length; i += 3) {
-        const r = flat[i + 2];
-        if (r < GLOW_MIN) continue;
-        const gr = r * GLOW_SCALE;
-        ctx.drawImage(sprite, flat[i] - gr, flat[i + 1] - gr, gr * 2, gr * 2);
+    if (dsp.showStarGlow) {
+      ctx.globalCompositeOperation = 'lighter';
+      for (const [type, flat] of bodyBuckets) {
+        const sprite = this.glowSprites[type];
+        if (!sprite) continue;
+        for (let i = 0; i < flat.length; i += 3) {
+          const r = flat[i + 2];
+          if (r < GLOW_MIN) continue;
+          const gr = r * GLOW_SCALE;
+          ctx.drawImage(sprite, flat[i] - gr, flat[i + 1] - gr, gr * 2, gr * 2);
+        }
       }
+      ctx.globalCompositeOperation = 'source-over';
     }
-    ctx.globalCompositeOperation = 'source-over';
 
     // Bright cores, one path per colour.
     for (const [type, flat] of bodyBuckets) {
@@ -148,15 +167,17 @@ export class Renderer {
     // Capitals: their own (brighter) cluster + a ring around the centre.
     for (const sp of capitals) {
       const dots = layoutStars(sp, CAPITAL_WORLD_R, cam.zoom);
-      ctx.globalCompositeOperation = 'lighter';
-      for (const d of dots) {
-        if (d.r < GLOW_MIN) continue;
-        const sprite = this.glowSprites[d.type];
-        if (!sprite) continue;
-        const gr = d.r * GLOW_SCALE;
-        ctx.drawImage(sprite, d.x - gr, d.y - gr, gr * 2, gr * 2);
+      if (dsp.showStarGlow) {
+        ctx.globalCompositeOperation = 'lighter';
+        for (const d of dots) {
+          if (d.r < GLOW_MIN) continue;
+          const sprite = this.glowSprites[d.type];
+          if (!sprite) continue;
+          const gr = d.r * GLOW_SCALE;
+          ctx.drawImage(sprite, d.x - gr, d.y - gr, gr * 2, gr * 2);
+        }
+        ctx.globalCompositeOperation = 'source-over';
       }
-      ctx.globalCompositeOperation = 'source-over';
       for (const d of dots) {
         ctx.fillStyle = STAR_COLORS[d.type];
         ctx.beginPath();
@@ -175,8 +196,10 @@ export class Renderer {
     }
 
     // Selection / pending-connection highlight.
+    const selected = new Set(opts.selection);
     for (const { s, p } of onScreen) {
-      if (s.id !== opts.selectedSystemId && s.id !== opts.connectFromId) continue;
+      const isSel = selected.has(s.id);
+      if (!isSel && s.id !== opts.connectFromId) continue;
       ctx.strokeStyle = s.id === opts.connectFromId ? '#ffe27a' : '#ffffff';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -185,19 +208,41 @@ export class Renderer {
     }
 
     // --- System markers: little icon badges above the star. ---
-    const markOp = clamp((cam.zoom - 0.6) / (1.0 - 0.6), 0, 1);
+    const markOp = dsp.showMarkers
+      ? clamp((cam.zoom - 0.6) / (1.0 - 0.6), 0, 1)
+      : 0;
     if (markOp > 0.02) {
       this.drawMarkers(ctx, onScreen, markOp);
     }
 
     // --- System name cards: only well zoomed in, faded via opacity. ---
-    const sysOp = clamp((cam.zoom - 1.3) / (1.9 - 1.3), 0, 1);
+    const z0 = dsp.systemNameZoom;
+    const sysOp = dsp.showSystemNames
+      ? clamp((cam.zoom - z0) / (z0 * 1.45 - z0), 0, 1)
+      : 0;
     if (sysOp > 0.02) {
       this.drawSystemCards(ctx, onScreen, sysOp);
     }
 
     // --- Empire labels at region centroids (main territory + each enclave). ---
-    this.drawEmpireLabels(ctx, map, cam);
+    if (dsp.showEmpireNames) this.drawEmpireLabels(ctx, map, cam, dsp);
+
+    if (opts.marquee) this.drawMarquee(ctx, opts.marquee);
+  }
+
+  /** Rubber-band selection rectangle. */
+  private drawMarquee(ctx: CanvasRenderingContext2D, m: Marquee) {
+    const x = Math.min(m.x0, m.x1);
+    const y = Math.min(m.y0, m.y1);
+    const w = Math.abs(m.x1 - m.x0);
+    const h = Math.abs(m.y1 - m.y0);
+    ctx.fillStyle = 'rgba(90,124,255,0.12)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(150,180,255,0.85)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+    ctx.setLineDash([]);
   }
 
   /** Small icon badges below a system's name card for each of its markers. */
@@ -272,9 +317,15 @@ export class Renderer {
     ctx.textBaseline = 'alphabetic';
   }
 
-  private drawEmpireLabels(ctx: CanvasRenderingContext2D, map: GalaxyMap, cam: Camera) {
-    // Fade out as you zoom IN (they hand off to system labels).
-    const zoomFade = clamp((1.7 - cam.zoom) / (1.7 - 1.0), 0, 1);
+  private drawEmpireLabels(
+    ctx: CanvasRenderingContext2D,
+    map: GalaxyMap,
+    cam: Camera,
+    dsp: DisplaySettings
+  ) {
+    // Fade out as you zoom IN, handing off to the system name cards.
+    const hideAt = dsp.systemNameZoom * 1.3;
+    const zoomFade = clamp((hideAt - cam.zoom) / (hideAt * 0.42), 0, 1);
     if (zoomFade <= 0.02) return;
 
     ctx.textAlign = 'center';
@@ -283,21 +334,24 @@ export class Renderer {
     for (const label of this.territory.labels) {
       const emp = map.empires[label.empireId];
       if (!emp) continue;
+      // The label has a size in WORLD units set by how much land the region
+      // covers — a big realm's name is simply a bigger object on the map. On
+      // screen it is that size times the zoom, so it grows as you fly in and
+      // shrinks as you pull out, exactly like the stars. Long names shrink
+      // sub-linearly so they stay readable instead of collapsing.
       const worldR = Math.sqrt(label.area / Math.PI);
-      // Size tracks the region's on-screen size so the name keeps filling its
-      // territory as you zoom (it must not shrink relative to the land). Each
-      // region/enclave is sized from its own area; longer names get a smaller
-      // font so they still fit.
-      const screenR = worldR * cam.zoom;
-      const nameLen = Math.max(6, emp.name.length);
-      const fontPx = clamp((screenR * 2.4) / nameLen, 11, 96);
-      // Hide when the region is too small on screen to hold the label.
-      const fit = clamp((screenR - fontPx * 0.55) / (fontPx * 0.55), 0, 1);
-      const op = zoomFade * fit;
+      const nameLen = Math.max(5, emp.name.length);
+      const worldFont =
+        ((worldR * 3.1) / Math.pow(nameLen, 0.82)) * dsp.empireNameScale;
+      const fontPx = worldFont * cam.zoom;
+      if (fontPx < 5) continue; // unreadable speck — skip the draw entirely
+      // Fade in over the last few px so labels don't pop.
+      const sizeFade = clamp((fontPx - 5) / 5, 0, 1);
+      const op = zoomFade * sizeFade;
       if (op <= 0.03) continue;
 
       const p = cam.worldToScreen(label.x, label.y);
-      ctx.font = EMPIRE_LABEL_FONT.replace('%PX', String(Math.round(fontPx)));
+      ctx.font = EMPIRE_LABEL_FONT.replace('%PX', fontPx.toFixed(1));
       // White, as-written (no upper-case), no shadow.
       ctx.fillStyle = `rgba(245,248,255,${op})`;
       ctx.fillText(emp.name, p.x, p.y);
@@ -362,7 +416,11 @@ export class Renderer {
     ctx.stroke();
   }
 
-  private drawBackground(ctx: CanvasRenderingContext2D, cam: Camera) {
+  private drawBackground(
+    ctx: CanvasRenderingContext2D,
+    cam: Camera,
+    dsp: DisplaySettings
+  ) {
     const { viewW: w, viewH: h } = cam;
     const bg = ctx.createLinearGradient(0, 0, 0, h);
     bg.addColorStop(0, '#04040a');
@@ -370,23 +428,27 @@ export class Renderer {
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, w, h);
 
-    for (const st of this.bgStars) {
-      const p = cam.worldToScreen(st.x, st.y);
-      if (p.x < 0 || p.x > w || p.y < 0 || p.y > h) continue;
-      ctx.globalAlpha = st.a;
-      ctx.fillStyle = st.color;
-      ctx.fillRect(p.x, p.y, st.r, st.r);
+    if (dsp.showBgStars) {
+      for (const st of this.bgStars) {
+        const p = cam.worldToScreen(st.x, st.y);
+        if (p.x < 0 || p.x > w || p.y < 0 || p.y > h) continue;
+        ctx.globalAlpha = st.a;
+        ctx.fillStyle = st.color;
+        ctx.fillRect(p.x, p.y, st.r, st.r);
+      }
+      ctx.globalAlpha = 1;
     }
-    ctx.globalAlpha = 1;
 
     // Soft vignette to focus the eye on the map centre.
-    const vig = ctx.createRadialGradient(
-      w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75
-    );
-    vig.addColorStop(0, 'rgba(0,0,0,0)');
-    vig.addColorStop(1, 'rgba(0,0,0,0.45)');
-    ctx.fillStyle = vig;
-    ctx.fillRect(0, 0, w, h);
+    if (dsp.showVignette) {
+      const vig = ctx.createRadialGradient(
+        w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75
+      );
+      vig.addColorStop(0, 'rgba(0,0,0,0)');
+      vig.addColorStop(1, 'rgba(0,0,0,0.45)');
+      ctx.fillStyle = vig;
+      ctx.fillRect(0, 0, w, h);
+    }
   }
 }
 

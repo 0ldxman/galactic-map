@@ -67,6 +67,8 @@ html, body, #root {
   font-size: 12px;
 }
 .tool-btn:hover { border-color: #3a4062; }
+.tool-btn:disabled { opacity: 0.35; cursor: default; }
+.tool-btn:disabled:hover { border-color: var(--border); }
 .tool-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .tool-btn.active .tool-key { color: rgba(255,255,255,0.85); }
 .tool-btn.primary { background: #2f9e57; border-color: #2f9e57; color: #fff; }
@@ -146,7 +148,9 @@ html, body, #root {
 .empire-row.active { border-color: var(--accent); background: #1b2140; }
 .empire-row input[type='color'] {
   width: 22px; height: 22px; padding: 0; border: none; background: none; cursor: pointer;
+  flex: 0 0 22px;
 }
+.empire-row input.border-swatch { width: 15px; flex: 0 0 15px; }
 .empire-name {
   flex: 1;
   min-width: 0;
@@ -228,6 +232,30 @@ html, body, #root {
 .marker-chip.active { background: #1b2140; border-color: var(--accent); color: var(--text); }
 .marker-glyph { font-size: 14px; line-height: 1; width: 16px; text-align: center; }
 .marker-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.marker-chip.partial {
+  border-color: #3a4062;
+  color: var(--text);
+  background: #171a2c;
+}
+
+/* Display panel */
+.toggle-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+  margin-bottom: 10px;
+}
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.toggle-row input { accent-color: var(--accent); margin: 0; }
+.toggle-row:hover { color: var(--text); }
 
 /* Help */
 .help-box {

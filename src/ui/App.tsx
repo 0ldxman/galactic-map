@@ -4,6 +4,7 @@ import { MapCanvas } from './MapCanvas';
 import { Toolbar } from './Toolbar';
 import { EmpirePanel } from './EmpirePanel';
 import { Inspector } from './Inspector';
+import { DisplayPanel } from './DisplayPanel';
 import { GenerateDialog } from './GenerateDialog';
 import { generateGalaxy } from '../generation/generateGalaxy';
 import { loadAutosave, saveAutosave } from '../persistence/io';
@@ -17,9 +18,10 @@ export function App() {
   useEffect(() => {
     if (bootstrapped.current) return;
     bootstrapped.current = true;
+    // `true` clears the undo history: this is opening a document, not an edit.
     const saved = loadAutosave();
     if (saved) {
-      setMap(saved);
+      setMap(saved, true);
     } else {
       setMap(
         generateGalaxy({
@@ -28,7 +30,8 @@ export function App() {
           systemCount: 300,
           empireCount: 6,
           arms: 3,
-        })
+        }),
+        true
       );
     }
   }, [setMap]);
@@ -59,9 +62,28 @@ export function App() {
           el.isContentEditable)
       )
         return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
       const st = useEditor.getState();
-      switch (e.key.toLowerCase()) {
+      const key = e.key.toLowerCase();
+
+      // Ctrl/Cmd combos first — copy/paste live in MapCanvas (it owns the
+      // cursor position needed to place a paste).
+      if (e.ctrlKey || e.metaKey) {
+        if (key === 'z') {
+          e.preventDefault();
+          if (e.shiftKey) st.redo();
+          else st.undo();
+        } else if (key === 'y') {
+          e.preventDefault();
+          st.redo();
+        } else if (key === 'a') {
+          e.preventDefault();
+          st.selectAll();
+        }
+        return;
+      }
+      if (e.altKey) return;
+
+      switch (key) {
         case 'v': st.setTool('select'); break;
         case 'a': st.setTool('add-system'); break;
         case 'l': st.setTool('connect'); break;
@@ -70,13 +92,13 @@ export function App() {
         case 'g': setShowGenerate(true); break;
         case 'escape':
           st.setConnectFrom(null);
-          st.selectSystem(null);
+          st.clearSelection();
           break;
         case 'delete':
         case 'backspace':
-          if (st.selectedSystemId) {
+          if (st.selection.length > 0) {
             e.preventDefault();
-            st.removeSystem(st.selectedSystemId);
+            st.removeSystems(st.selection);
           }
           break;
       }
@@ -92,14 +114,17 @@ export function App() {
       <aside className="sidebar">
         <EmpirePanel />
         <Inspector />
+        <DisplayPanel />
         <div className="help-box">
           <b>Shortcuts</b>
           <ul>
             <li><b>V</b> Select · <b>A</b> Add · <b>L</b> Link</li>
             <li><b>B</b> Paint · <b>E</b> Erase · <b>G</b> Generate</li>
-            <li><b>Del</b> remove selected · <b>Esc</b> cancel</li>
-            <li>Drag empty space / middle-drag — pan</li>
-            <li>Wheel — zoom · Erase clicks systems <i>or</i> links</li>
+            <li><b>Ctrl+Z</b> undo · <b>Ctrl+Shift+Z</b> redo</li>
+            <li><b>Ctrl+C/X/V</b> copy · <b>Ctrl+D</b> duplicate</li>
+            <li><b>Ctrl+A</b> select all · <b>Del</b> remove selected</li>
+            <li>Drag empty space — box select (<b>Shift</b> adds)</li>
+            <li>Right- or middle-drag — pan · Wheel — zoom</li>
           </ul>
         </div>
       </aside>
