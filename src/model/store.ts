@@ -43,6 +43,7 @@ export interface EditorState {
   moveSystem: (id: ID, x: number, y: number) => void;
   removeSystem: (id: ID) => void;
   setOwner: (systemId: ID, ownerId: ID | null) => void;
+  toggleMarker: (systemId: ID, markerId: string) => void;
 
   // --- hyperlanes ---
   toggleHyperlane: (a: ID, b: ID) => void;
@@ -96,6 +97,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       starType: (opts?.starType as StarType) ?? 'yellow',
       ownerId: opts?.ownerId ?? null,
       influence: opts?.influence ?? 34,
+      markers: opts?.markers ?? [],
     };
     set((s) => {
       const map = { ...s.map, systems: { ...s.map.systems, [id]: system } };
@@ -154,6 +156,21 @@ export const useEditor = create<EditorState>((set, get) => ({
       const map = {
         ...s.map,
         systems: { ...s.map.systems, [systemId]: { ...cur, ownerId } },
+      };
+      return bump(map, s.revision);
+    }),
+
+  toggleMarker: (systemId, markerId) =>
+    set((s) => {
+      const cur = s.map.systems[systemId];
+      if (!cur) return {};
+      const have = cur.markers ?? [];
+      const markers = have.includes(markerId)
+        ? have.filter((m) => m !== markerId)
+        : [...have, markerId];
+      const map = {
+        ...s.map,
+        systems: { ...s.map.systems, [systemId]: { ...cur, markers } },
       };
       return bump(map, s.revision);
     }),

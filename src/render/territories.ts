@@ -117,8 +117,9 @@ export class TerritoryRenderer {
     const worldW = maxX - minX;
     const worldH = maxY - minY;
 
-    // Solve ownership on a coarse grid; vector smoothing hides the coarseness.
-    const ppw = Math.min(0.9, 850 / Math.max(worldW, worldH));
+    // Solve ownership on a grid; the vector pass smooths the staircase. Finer
+    // cells = smaller steps = smoother borders (at some rebuild cost).
+    const ppw = Math.min(1.0, 1400 / Math.max(worldW, worldH));
     const rw = Math.max(1, Math.round(worldW * ppw));
     const rh = Math.max(1, Math.round(worldH * ppw));
 
@@ -321,7 +322,10 @@ export class TerritoryRenderer {
           pts.push({ x: minX + cx * invPpw, y: minY + cy * invPpw });
         }
         if (pts.length < 2) continue;
-        const sm = pts.length >= 4 ? chaikin(chaikin(pts)) : pts;
+        // Collapse the axis-aligned staircase into its corner points first
+        // (keeps straights straight), then round the corners with Chaikin.
+        const simp = simplifyClosed(pts);
+        const sm = simp.length >= 4 ? chaikin(chaikin(chaikin(simp))) : simp;
         path.moveTo(sm[0].x, sm[0].y);
         for (let i = 1; i < sm.length; i++) path.lineTo(sm[i].x, sm[i].y);
         path.closePath();
@@ -371,4 +375,20 @@ function chaikin(pts: Pt[]): Pt[] {
     out[i * 2 + 1] = { x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 };
   }
   return out;
+}
+
+/** Drop points that lie on a straight run, keeping only the corners. */
+function simplifyClosed(pts: Pt[]): Pt[] {
+  const n = pts.length;
+  if (n < 3) return pts;
+  const out: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = pts[(i - 1 + n) % n];
+    const b = pts[i];
+    const c = pts[(i + 1) % n];
+    // Cross product of (b-a) and (c-b): ~0 means b is collinear -> redundant.
+    const cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    if (Math.abs(cross) > 1e-6) out.push(b);
+  }
+  return out.length >= 3 ? out : pts;
 }

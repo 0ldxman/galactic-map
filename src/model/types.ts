@@ -17,6 +17,8 @@ export interface System {
   ownerId: ID | null;
   /** Radius of political influence (world units) used for territory blobs. */
   influence: number;
+  /** Marker/annotation ids (see model/markers.ts). A system may have many. */
+  markers?: string[];
 }
 
 export interface Hyperlane {

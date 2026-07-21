@@ -1,5 +1,6 @@
 import { useEditor } from '../model/store';
 import { StarType } from '../model/types';
+import { MARKER_TYPES } from '../model/markers';
 
 const STAR_TYPES: StarType[] = ['yellow', 'red', 'blue', 'white', 'neutron', 'blackhole'];
 
@@ -10,6 +11,7 @@ export function Inspector() {
   const setOwner = useEditor((s) => s.setOwner);
   const removeSystem = useEditor((s) => s.removeSystem);
   const updateEmpire = useEditor((s) => s.updateEmpire);
+  const toggleMarker = useEditor((s) => s.toggleMarker);
 
   const sys = selectedSystemId ? map.systems[selectedSystemId] : null;
 
@@ -93,6 +95,29 @@ export function Inspector() {
           {isCapital ? '★ Capital' : 'Set as capital'}
         </button>
       )}
+
+      <div className="field" style={{ marginTop: 4 }}>
+        <span>Markers</span>
+        <div className="marker-grid">
+          {MARKER_TYPES.map((m) => {
+            const on = (sys.markers ?? []).includes(m.id);
+            return (
+              <button
+                key={m.id}
+                type="button"
+                className={`marker-chip${on ? ' active' : ''}`}
+                title={m.label}
+                onClick={() => toggleMarker(sys.id, m.id)}
+              >
+                <span className="marker-glyph" style={{ color: m.color }}>
+                  {m.glyph}
+                </span>
+                <span className="marker-label">{m.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

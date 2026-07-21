@@ -180,6 +180,30 @@ html, body, #root {
 .seed-row { display: flex; gap: 6px; }
 .seed-row input { flex: 1; }
 
+/* Markers */
+.marker-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+.marker-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: #0f1120;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+  font-size: 11px;
+}
+.marker-chip:hover { border-color: #3a4062; }
+.marker-chip.active { background: #1b2140; border-color: var(--accent); color: var(--text); }
+.marker-glyph { font-size: 14px; line-height: 1; width: 16px; text-align: center; }
+.marker-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Help */
 .help-box {
   color: var(--muted);

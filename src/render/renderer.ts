@@ -1,4 +1,5 @@
 import { GalaxyMap, STAR_COLORS, System } from '../model/types';
+import { MARKER_BY_ID } from '../model/markers';
 import { Camera } from './camera';
 import { TerritoryRenderer } from './territories';
 import { mulberry32 } from '../util/rng';
@@ -130,20 +131,91 @@ export class Renderer {
       ctx.stroke();
     }
 
-    // --- System name labels: only well zoomed in, faded via opacity. ---
+    // --- System markers: little icon badges above the star. ---
+    const markOp = clamp((cam.zoom - 0.6) / (1.0 - 0.6), 0, 1);
+    if (markOp > 0.02) {
+      this.drawMarkers(ctx, onScreen, markOp);
+    }
+
+    // --- System name cards: only well zoomed in, faded via opacity. ---
     const sysOp = clamp((cam.zoom - 1.3) / (1.9 - 1.3), 0, 1);
     if (sysOp > 0.02) {
-      ctx.font = '10px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = `rgba(220,230,245,${0.8 * sysOp})`;
-      for (const { s, p } of onScreen) {
-        if (s.starType === 'blackhole') continue;
-        ctx.fillText(s.name, p.x, p.y - 8);
-      }
+      this.drawSystemCards(ctx, onScreen, sysOp);
     }
 
     // --- Empire labels at region centroids (main territory + each enclave). ---
     this.drawEmpireLabels(ctx, map, cam);
+  }
+
+  /** Small icon badges above a system for each of its markers. */
+  private drawMarkers(
+    ctx: CanvasRenderingContext2D,
+    onScreen: { s: System; p: { x: number; y: number } }[],
+    op: number
+  ) {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '11px system-ui, sans-serif';
+    const gap = 15;
+    const badgeR = 7;
+    for (const { s, p } of onScreen) {
+      const ms = s.markers;
+      if (!ms || ms.length === 0) continue;
+      const y = p.y - 12;
+      const startX = p.x - ((ms.length - 1) * gap) / 2;
+      for (let i = 0; i < ms.length; i++) {
+        const mk = MARKER_BY_ID[ms[i]];
+        if (!mk) continue;
+        const x = startX + i * gap;
+        ctx.globalAlpha = op * 0.9;
+        ctx.fillStyle = 'rgba(8,11,22,0.92)';
+        ctx.beginPath();
+        ctx.arc(x, y, badgeR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = op;
+        ctx.strokeStyle = mk.color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(x, y, badgeR, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = mk.color;
+        ctx.fillText(mk.glyph, x, y + 0.5);
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  /** Stellaris-style name card centred below each star. */
+  private drawSystemCards(
+    ctx: CanvasRenderingContext2D,
+    onScreen: { s: System; p: { x: number; y: number } }[],
+    op: number
+  ) {
+    ctx.font = '11px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const padX = 6;
+    const boxH = 16;
+    for (const { s, p } of onScreen) {
+      if (s.starType === 'blackhole') continue;
+      const tw = ctx.measureText(s.name).width;
+      const boxW = tw + padX * 2;
+      const cx = p.x;
+      const top = p.y + 8;
+      ctx.globalAlpha = op;
+      ctx.fillStyle = 'rgba(10,14,26,0.78)';
+      ctx.strokeStyle = 'rgba(150,180,230,0.28)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(cx - boxW / 2, top, boxW, boxH, 4);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(226,234,248,1)';
+      ctx.fillText(s.name, cx, top + boxH / 2 + 0.5);
+    }
+    ctx.globalAlpha = 1;
+    ctx.textBaseline = 'alphabetic';
   }
 
   private drawEmpireLabels(ctx: CanvasRenderingContext2D, map: GalaxyMap, cam: Camera) {
@@ -153,8 +225,6 @@ export class Renderer {
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const anyCtx = ctx as unknown as { letterSpacing: string };
-    const prevSpacing = anyCtx.letterSpacing;
 
     for (const label of this.territory.labels) {
       const emp = map.empires[label.empireId];
@@ -173,17 +243,12 @@ export class Renderer {
       if (op <= 0.03) continue;
 
       const p = cam.worldToScreen(label.x, label.y);
-      anyCtx.letterSpacing = `${Math.max(1, fontPx * 0.06)}px`;
       ctx.font = EMPIRE_LABEL_FONT.replace('%PX', String(Math.round(fontPx)));
-
-      ctx.shadowColor = 'rgba(0,0,0,0.85)';
-      ctx.shadowBlur = 6;
-      ctx.fillStyle = withAlpha(emp.color, op);
-      ctx.fillText(emp.name.toUpperCase(), p.x, p.y);
-      ctx.shadowBlur = 0;
+      // White, as-written (no upper-case), no shadow.
+      ctx.fillStyle = `rgba(245,248,255,${op})`;
+      ctx.fillText(emp.name, p.x, p.y);
     }
 
-    anyCtx.letterSpacing = prevSpacing ?? '0px';
     ctx.textBaseline = 'alphabetic';
   }
 
@@ -273,10 +338,4 @@ export class Renderer {
 
 function clamp(v: number, lo: number, hi: number) {
   return v < lo ? lo : v > hi ? hi : v;
-}
-
-function withAlpha(hex: string, a: number): string {
-  const h = hex.replace('#', '');
-  const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
