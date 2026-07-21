@@ -3,6 +3,10 @@ export interface Point {
   y: number;
 }
 
+/** Near-unlimited zoom range. */
+export const ZOOM_MIN = 0.01;
+export const ZOOM_MAX = 600;
+
 /** Maps between world coordinates and screen pixels with pan + zoom. */
 export class Camera {
   /** world position at the centre of the viewport */
@@ -42,7 +46,7 @@ export class Camera {
   /** Zoom keeping the world point under (sx, sy) fixed on screen. */
   zoomAt(sx: number, sy: number, factor: number) {
     const before = this.screenToWorld(sx, sy);
-    this.zoom = Math.min(4, Math.max(0.05, this.zoom * factor));
+    this.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, this.zoom * factor));
     const after = this.screenToWorld(sx, sy);
     this.x += before.x - after.x;
     this.y += before.y - after.y;
@@ -56,6 +60,6 @@ export class Camera {
     this.y = (minY + maxY) / 2;
     const zx = this.viewW / (w * pad);
     const zy = this.viewH / (h * pad);
-    this.zoom = Math.min(4, Math.max(0.05, Math.min(zx, zy)));
+    this.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.min(zx, zy)));
   }
 }

@@ -19,6 +19,8 @@ export interface System {
   influence: number;
   /** Marker/annotation ids (see model/markers.ts). A system may have many. */
   markers?: string[];
+  /** Number of stars in the system, 1–4 (drawn as a little cluster). */
+  stars?: number;
 }
 
 export interface Hyperlane {

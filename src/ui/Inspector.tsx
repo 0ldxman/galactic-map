@@ -60,6 +60,21 @@ export function Inspector() {
           ))}
         </select>
       </label>
+      <div className="field">
+        <span>Stars in system</span>
+        <div className="seg">
+          {[1, 2, 3, 4].map((n) => (
+            <button
+              key={n}
+              type="button"
+              className={`seg-btn${(sys.stars ?? 1) === n ? ' active' : ''}`}
+              onClick={() => updateSystem(sys.id, { stars: n })}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
       <label className="field">
         <span>Owner</span>
         <select

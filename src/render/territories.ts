@@ -119,7 +119,7 @@ export class TerritoryRenderer {
 
     // Solve ownership on a grid; the vector pass smooths the staircase. Finer
     // cells = smaller steps = smoother borders (at some rebuild cost).
-    const ppw = Math.min(1.0, 1400 / Math.max(worldW, worldH));
+    const ppw = Math.min(1.0, 1100 / Math.max(worldW, worldH));
     const rw = Math.max(1, Math.round(worldW * ppw));
     const rh = Math.max(1, Math.round(worldH * ppw));
 
@@ -345,19 +345,15 @@ export class TerritoryRenderer {
     target.lineJoin = 'round';
     target.lineCap = 'round';
 
+    // Fill + a single crisp outline (fixed 2px on screen). Kept to two path
+    // traversals per region for performance while panning.
     for (const rg of this.regions) {
       target.fillStyle = rg.fill;
       target.fill(rg.path, 'evenodd');
     }
-    // Soft outer glow, then the crisp line — both at fixed screen widths.
-    for (const rg of this.regions) {
-      target.strokeStyle = rg.glow;
-      target.lineWidth = 5 / z;
-      target.stroke(rg.path);
-    }
+    target.lineWidth = 2 / z;
     for (const rg of this.regions) {
       target.strokeStyle = rg.edge;
-      target.lineWidth = 2 / z;
       target.stroke(rg.path);
     }
     target.restore();

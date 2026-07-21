@@ -8,7 +8,18 @@ import {
   StarType,
   emptyMap,
 } from './types';
-import { makeId } from '../util/rng';
+import { makeId, Rng } from '../util/rng';
+import { systemName } from '../generation/names';
+
+// Non-deterministic RNG for hand-created systems (auto name / type / star count).
+const editorRng = new Rng((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0);
+const RANDOM_STAR_TYPES: StarType[] = ['yellow', 'red', 'blue', 'white', 'neutron'];
+const RANDOM_STAR_WEIGHTS = [30, 34, 12, 14, 6];
+
+/** 1–4 stars, heavily weighted toward single/binary systems. */
+function randomStarCount(): number {
+  return editorRng.weighted([1, 2, 3, 4], [60, 27, 9, 4]);
+}
 
 export type Tool =
   | 'select'
@@ -91,13 +102,16 @@ export const useEditor = create<EditorState>((set, get) => ({
     const id = makeId('sys');
     const system: System = {
       id,
-      name: opts?.name ?? 'Unnamed',
+      name: opts?.name ?? systemName(editorRng),
       x,
       y,
-      starType: (opts?.starType as StarType) ?? 'yellow',
+      starType:
+        (opts?.starType as StarType) ??
+        editorRng.weighted(RANDOM_STAR_TYPES, RANDOM_STAR_WEIGHTS),
       ownerId: opts?.ownerId ?? null,
       influence: opts?.influence ?? 34,
       markers: opts?.markers ?? [],
+      stars: opts?.stars ?? randomStarCount(),
     };
     set((s) => {
       const map = { ...s.map, systems: { ...s.map.systems, [id]: system } };

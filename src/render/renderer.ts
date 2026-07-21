@@ -56,7 +56,28 @@ export class Renderer {
     this.territory.update(systems, map.empires, opts.revision, opts.deferTerritory);
     this.territory.draw(ctx, cam);
 
-    // Hyperlanes — thin schematic circuit lines.
+    // --- Systems: cull to the viewport once, reuse the screen positions. ---
+    const margin = 30;
+    type SP = { s: System; p: { x: number; y: number } };
+    const buckets = new Map<string, SP[]>();
+    const capitals: SP[] = [];
+    const blackholes: SP[] = [];
+    const onScreen: SP[] = [];
+
+    for (const s of systems) {
+      const p = cam.worldToScreen(s.x, s.y);
+      if (p.x < -margin || p.x > w + margin || p.y < -margin || p.y > h + margin) continue;
+      const sp = { s, p };
+      onScreen.push(sp);
+      if (s.starType === 'blackhole') { blackholes.push(sp); continue; }
+      const isCapital = map.empires[s.ownerId ?? '']?.capitalId === s.id;
+      if (isCapital) { capitals.push(sp); continue; }
+      const arr = buckets.get(s.starType) ?? [];
+      arr.push(sp);
+      buckets.set(s.starType, arr);
+    }
+
+    // Hyperlanes — thin schematic lines, skipping any fully off-screen.
     ctx.lineWidth = 1;
     ctx.strokeStyle = 'rgba(140,175,220,0.20)';
     ctx.beginPath();
@@ -66,48 +87,31 @@ export class Renderer {
       if (!a || !b) continue;
       const pa = cam.worldToScreen(a.x, a.y);
       const pb = cam.worldToScreen(b.x, b.y);
+      if (pa.x < -margin && pb.x < -margin) continue;
+      if (pa.x > w + margin && pb.x > w + margin) continue;
+      if (pa.y < -margin && pb.y < -margin) continue;
+      if (pa.y > h + margin && pb.y > h + margin) continue;
       ctx.moveTo(pa.x, pa.y);
       ctx.lineTo(pb.x, pb.y);
     }
     ctx.stroke();
 
-    // --- Systems: bucket the visible ones and draw each colour in ONE path. ---
-    const margin = 30;
-    const buckets = new Map<string, System[]>();
-    const capitals: { s: System; p: { x: number; y: number } }[] = [];
-    const blackholes: System[] = [];
-    const onScreen: { s: System; p: { x: number; y: number } }[] = [];
-
-    for (const s of systems) {
-      const p = cam.worldToScreen(s.x, s.y);
-      if (p.x < -margin || p.x > w + margin || p.y < -margin || p.y > h + margin) continue;
-      onScreen.push({ s, p });
-      if (s.starType === 'blackhole') { blackholes.push(s); continue; }
-      const isCapital = map.empires[s.ownerId ?? '']?.capitalId === s.id;
-      if (isCapital) { capitals.push({ s, p }); continue; }
-      const arr = buckets.get(s.starType) ?? [];
-      arr.push(s);
-      buckets.set(s.starType, arr);
-    }
-
+    // Star dots, one path per colour. Multi-star systems draw a little cluster.
     const dotR = 1.9;
     for (const [starType, list] of buckets) {
       ctx.fillStyle = STAR_COLORS[starType as keyof typeof STAR_COLORS];
       ctx.beginPath();
-      for (const s of list) {
-        const p = cam.worldToScreen(s.x, s.y);
-        ctx.moveTo(p.x + dotR, p.y);
-        ctx.arc(p.x, p.y, dotR, 0, Math.PI * 2);
+      for (const { s, p } of list) {
+        addStarCluster(ctx, p.x, p.y, s.stars ?? 1, dotR);
       }
       ctx.fill();
     }
 
-    // Capitals: brighter dot + ring.
+    // Capitals: brighter cluster + ring.
     for (const { s, p } of capitals) {
-      const color = STAR_COLORS[s.starType];
-      ctx.fillStyle = color;
+      ctx.fillStyle = STAR_COLORS[s.starType];
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 3.4, 0, Math.PI * 2);
+      addStarCluster(ctx, p.x, p.y, s.stars ?? 1, 2.6);
       ctx.fill();
       ctx.strokeStyle = 'rgba(255,255,255,0.85)';
       ctx.lineWidth = 1.2;
@@ -116,8 +120,7 @@ export class Renderer {
       ctx.stroke();
     }
 
-    for (const s of blackholes) {
-      const p = cam.worldToScreen(s.x, s.y);
+    for (const { s, p } of blackholes) {
       this.drawBlackHole(ctx, p.x, p.y, cam.zoom, s.influence === 0);
     }
 
@@ -147,7 +150,7 @@ export class Renderer {
     this.drawEmpireLabels(ctx, map, cam);
   }
 
-  /** Small icon badges above a system for each of its markers. */
+  /** Small icon badges below a system's name card for each of its markers. */
   private drawMarkers(
     ctx: CanvasRenderingContext2D,
     onScreen: { s: System; p: { x: number; y: number } }[],
@@ -161,7 +164,8 @@ export class Renderer {
     for (const { s, p } of onScreen) {
       const ms = s.markers;
       if (!ms || ms.length === 0) continue;
-      const y = p.y - 12;
+      // Sit just under where the name card is (card bottom ≈ p.y + 24).
+      const y = p.y + 24 + 4 + badgeR;
       const startX = p.x - ((ms.length - 1) * gap) / 2;
       for (let i = 0; i < ms.length; i++) {
         const mk = MARKER_BY_ID[ms[i]];
@@ -338,4 +342,32 @@ export class Renderer {
 
 function clamp(v: number, lo: number, hi: number) {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+/** Add `n` (1–4) star dots as a small cluster to the current path. */
+function addStarCluster(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  n: number,
+  r: number
+) {
+  const count = n <= 1 ? 1 : Math.min(4, n);
+  if (count === 1) {
+    ctx.moveTo(x + r, y);
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    return;
+  }
+  const d = r * 1.5; // cluster spread
+  const rr = r * 0.85; // slightly smaller dots when clustered
+  const offs =
+    count === 2
+      ? [[-d, 0], [d, 0]]
+      : count === 3
+        ? [[0, -d], [-d, d * 0.8], [d, d * 0.8]]
+        : [[-d, -d], [d, -d], [-d, d], [d, d]];
+  for (const [ox, oy] of offs) {
+    ctx.moveTo(x + ox + rr, y + oy);
+    ctx.arc(x + ox, y + oy, rr, 0, Math.PI * 2);
+  }
 }

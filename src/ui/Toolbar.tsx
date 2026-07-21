@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { useEditor, Tool } from '../model/store';
-import { exportToFile, importFromFile } from '../persistence/io';
+import { exportToFile, exportCanvasPng, importFromFile } from '../persistence/io';
 
 const TOOLS: { id: Tool; label: string; icon: string; key: string; hint: string }[] = [
   { id: 'select', label: 'Select', icon: '↖', key: 'V', hint: 'Select & move systems / pan' },
@@ -64,7 +64,15 @@ export function Toolbar({ onOpenGenerate }: { onOpenGenerate: () => void }) {
           onClick={() => exportToFile(map)}
         >
           <span className="tool-icon">↧</span>
-          <span className="tool-key">Exp</span>
+          <span className="tool-key">JSON</span>
+        </button>
+        <button
+          className="tool-btn"
+          title="Export current view as PNG image"
+          onClick={() => exportCanvasPng()}
+        >
+          <span className="tool-icon">🖼</span>
+          <span className="tool-key">PNG</span>
         </button>
         <button
           className="tool-btn"

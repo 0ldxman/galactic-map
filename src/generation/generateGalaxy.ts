@@ -83,6 +83,7 @@ export function generateGalaxy(params: GenerateParams): GalaxyMap {
       starType: rng.weighted(STAR_TYPES, STAR_WEIGHTS),
       ownerId: ownerIdx >= 0 ? empireIds[ownerIdx] : null,
       influence,
+      stars: rng.weighted([1, 2, 3, 4], [60, 27, 9, 4]),
     };
   }
 

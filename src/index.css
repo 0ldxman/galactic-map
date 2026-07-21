@@ -180,6 +180,21 @@ html, body, #root {
 .seed-row { display: flex; gap: 6px; }
 .seed-row input { flex: 1; }
 
+/* Segmented control */
+.seg { display: flex; gap: 4px; }
+.seg-btn {
+  flex: 1;
+  padding: 4px 0;
+  background: #0f1120;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.seg-btn:hover { border-color: #3a4062; }
+.seg-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
 /* Markers */
 .marker-grid {
   display: grid;
