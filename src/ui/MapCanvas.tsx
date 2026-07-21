@@ -167,7 +167,13 @@ export function MapCanvas() {
           deferTerritory: dragRef.current.mode === 'move',
           marquee: marqueeRef.current,
           draftAnnotation: draftRef.current,
-          peers: peers.filter((p) => p.id !== useSync.getState().selfId),
+          // Only editors have pointers worth showing, and a viewer sees the
+          // map alone — no one else's cursor either.
+          peers: st.readOnly
+            ? []
+            : peers.filter(
+                (p) => p.canEdit && p.id !== useSync.getState().selfId
+              ),
           brush:
             st.tool === 'nebula' && c.inside
               ? { x: c.x, y: c.y, r: st.brushSize * cam.zoom }
@@ -425,6 +431,22 @@ export function MapCanvas() {
     }
 
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+
+    // Read-only (a published map opened by a guest): the map is all there is.
+    // Left-drag pans, a click looks something up. No tools, no box select.
+    if (state.readOnly) {
+      const obj = hitTestObject(x, y);
+      const sys = obj ? null : hitTest(x, y);
+      if (obj) state.selectEntity({ c: 'objects', id: obj });
+      else if (sys) state.selectSystem(sys);
+      else {
+        const reg = hitTestRegion(x, y);
+        if (reg) state.selectEntity({ c: 'regions', id: reg });
+        else state.clearSelection();
+      }
+      drag.mode = 'pan';
+      return;
+    }
 
     switch (state.tool) {
       case 'select': {

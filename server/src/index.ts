@@ -41,6 +41,7 @@ import {
   presenceColor,
   updateAccess,
   activeUsers,
+  dropStaleViewers,
   flushAll,
   Client,
 } from './rooms';
@@ -187,12 +188,33 @@ async function main() {
     };
     if (map) writeMap(id, map);
     if (title !== undefined || published !== undefined) {
-      updateMeta(id, {
+      const next = updateMeta(id, {
         ...(title !== undefined ? { title } : {}),
         ...(published !== undefined ? { published } : {}),
-      });
+      })!;
+      // Un-publishing has to reach the people already watching.
+      if (published !== undefined) {
+        dropStaleViewers(id, next.published, next.viewToken);
+      }
     }
     return { map: publicMeta(getMeta(id)!) };
+  });
+
+  /**
+   * Mint a fresh view token, invalidating every link handed out so far. This is
+   * the only way to take back a link that has leaked.
+   */
+  app.post('/api/maps/:id/rotate-link', async (req, reply) => {
+    const user = me(req);
+    const { id } = req.params as { id: string };
+    const meta = getMeta(id);
+    if (!meta) return reply.code(404).send({ error: 'No such map.' });
+    if (meta.ownerId !== user?.id && !user?.admin) {
+      return reply.code(403).send({ error: 'Only the owner can do that.' });
+    }
+    const next = updateMeta(id, { viewToken: newId(9) })!;
+    dropStaleViewers(id, next.published, next.viewToken);
+    return { map: publicMeta(next) };
   });
 
   /** Who may edit this map, besides its owner. Owner (or an admin) decides. */
@@ -284,6 +306,8 @@ async function main() {
       canEdit: editor,
       color: presenceColor(room.clients.size),
       send,
+      close: () => socket.close(),
+      token: editor ? undefined : token,
     };
     join(room, client);
 

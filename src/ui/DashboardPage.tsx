@@ -237,12 +237,32 @@ export function DashboardPage({
                     <span>Anyone with the link can view</span>
                   </label>
                   {m.published && (
-                    <input
-                      className="empire-name"
-                      readOnly
-                      value={viewerLink(m.slug, m.viewToken)}
-                      onFocus={(e) => e.currentTarget.select()}
-                    />
+                    <>
+                      <input
+                        className="empire-name"
+                        readOnly
+                        value={viewerLink(m.slug, m.viewToken)}
+                        onFocus={(e) => e.currentTarget.select()}
+                      />
+                      <button
+                        className="mini-btn"
+                        title="Mint a new link and break every old one"
+                        onClick={() => {
+                          if (
+                            !confirm(
+                              'Regenerate the link? Everyone holding the old one loses access immediately.'
+                            )
+                          )
+                            return;
+                          guard(async () => {
+                            await api.rotateLink(m.id);
+                            await refresh();
+                          });
+                        }}
+                      >
+                        ↻ New link
+                      </button>
+                    </>
                   )}
                   <AccessSection
                     map={m}

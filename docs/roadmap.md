@@ -95,9 +95,15 @@ the borders and moving a system no longer rebakes the nebula texture.
   to the other clients and saves debounced. Co-editor cursors included.
 - Local undo stays local: remote ops are applied through `applyRemote`, which
   neither records history nor echoes back.
-- **Publishing**: `/v/<slug>?t=<token>` boots the app in viewer mode. Read-only
-  is enforced on the server — a guest socket may watch but its ops are dropped,
-  so nothing can be smuggled past the UI.
+- **Publishing**: `/v/<slug>?t=<token>` shows the map full bleed — no tools, no
+  panels, a title in the corner and a card only when the guest clicks
+  something. Read-only is enforced on the server: a guest socket may watch, but
+  its ops are dropped, so nothing can be smuggled past the UI.
+  - Viewers are silent: they neither broadcast a cursor nor see anyone else's.
+  - The link can be **regenerated**, which is the only way to take back one
+    that has leaked; unpublishing and regenerating both **disconnect** the
+    guests holding a link that no longer works, instead of leaving them
+    watching until they close the tab.
 
 ## Phase F — shell & UI ✅
 

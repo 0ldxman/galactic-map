@@ -195,6 +195,8 @@ function open() {
 
 /** Tell the room where this user's pointer is (throttled by the caller). */
 export function sendCursor(x: number, y: number) {
-  if (useSync.getState().status !== 'live') return;
+  const s = useSync.getState();
+  // Viewers watch silently; the server ignores their cursors anyway.
+  if (s.status !== 'live' || s.viewer) return;
   send({ t: 'cursor', x, y });
 }

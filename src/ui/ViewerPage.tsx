@@ -1,14 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../net/api';
-import { connectMap, disconnect } from '../net/sync';
+import { connectMap, disconnect, useSync } from '../net/sync';
+import { useEditor } from '../model/store';
 import { MapCanvas } from './MapCanvas';
-import { ViewerPanel } from './ViewerPanel';
+import { ViewerCard } from './ViewerCard';
 
-/** A published map, opened by anyone holding the link. Read-only throughout. */
+/**
+ * A published map as its audience sees it: the map, full bleed. No tools, no
+ * panels — a title in the corner, and a card only when they click something.
+ */
 export function ViewerPage({ slug, token }: { slug: string; token: string }) {
   const [meta, setMeta] = useState<{ title: string; owner: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const booted = useRef(false);
+  const clearSelection = useEditor((s) => s.clearSelection);
+  const syncError = useSync((s) => s.error);
+  const status = useSync((s) => s.status);
 
   useEffect(() => {
     if (booted.current) return;
@@ -23,26 +30,39 @@ export function ViewerPage({ slug, token }: { slug: string; token: string }) {
     return () => disconnect();
   }, [slug, token]);
 
-  return (
-    <div className="app">
-      <MapCanvas />
-      <aside className="sidebar viewer">
-        <div className="tab-body">
-          {error ? (
-            <div className="panel">
-              <div className="panel-header">
-                <span>Cannot open this map</span>
-              </div>
-              <div className="error-note">{error}</div>
-            </div>
-          ) : (
-            <ViewerPanel
-              title={meta?.title ?? 'Loading…'}
-              owner={meta?.owner ?? '…'}
-            />
-          )}
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') clearSelection();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [clearSelection]);
+
+  const fatal = error ?? (status === 'error' ? syncError : null);
+
+  if (fatal) {
+    return (
+      <div className="viewer-blocked">
+        <div className="auth-card">
+          <div className="auth-logo">✷</div>
+          <h1>Map unavailable</h1>
+          <p className="auth-sub">{fatal}</p>
         </div>
-      </aside>
+      </div>
+    );
+  }
+
+  return (
+    <div className="viewer-page">
+      <MapCanvas />
+      <div className="viewer-title">
+        <b>{meta?.title ?? 'Loading…'}</b>
+        {meta && <span>by {meta.owner}</span>}
+      </div>
+      <div className="viewer-hint">
+        Drag to pan · wheel to zoom · click anything to read about it
+      </div>
+      <ViewerCard onClose={clearSelection} />
     </div>
   );
 }

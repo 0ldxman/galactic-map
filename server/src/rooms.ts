@@ -22,6 +22,9 @@ export interface Client {
   canEdit: boolean;
   color: string;
   send: (msg: unknown) => void;
+  close: () => void;
+  /** the view token this client came in with, if it is a public viewer */
+  token?: string;
   cursor?: { x: number; y: number };
 }
 
@@ -137,12 +140,36 @@ export function applyFrom(room: Room, from: Client, ops: Op[]) {
   }
 }
 
+/**
+ * Editors see each other's pointers. Viewers are silent observers: they neither
+ * broadcast a cursor nor receive anyone else's — a published map is a finished
+ * artefact, not a workspace to watch people move around in.
+ */
 export function setCursor(room: Room, client: Client, x: number, y: number) {
+  if (!client.canEdit) return;
   client.cursor = { x, y };
   for (const c of room.clients.values()) {
-    if (c.id === client.id) continue;
+    if (c.id === client.id || !c.canEdit) continue;
     c.send({ t: 'cursor', id: client.id, x, y });
   }
+}
+
+/**
+ * Disconnect public viewers who no longer hold a valid link — because the map
+ * was unpublished, or its link was regenerated. Without this they would keep
+ * receiving edits until they happened to close the tab.
+ */
+export function dropStaleViewers(mapId: string, published: boolean, token: string) {
+  const room = rooms.get(mapId);
+  if (!room) return;
+  for (const c of [...room.clients.values()]) {
+    if (c.canEdit) continue;
+    if (published && c.token === token) continue;
+    c.send({ t: 'error', message: 'This map is no longer shared.' });
+    c.close();
+    room.clients.delete(c.id);
+  }
+  broadcastPresence(room);
 }
 
 /**

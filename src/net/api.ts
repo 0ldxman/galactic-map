@@ -68,6 +68,9 @@ export const api = {
       body: JSON.stringify(patch),
     }),
 
+  rotateLink: (id: string) =>
+    call<{ map: RemoteMap }>(`/api/maps/${id}/rotate-link`, { method: 'POST' }),
+
   setAccess: (id: string, editors: string[]) =>
     call<{ map: RemoteMap }>(`/api/maps/${id}/access`, {
       method: 'PUT',
