@@ -1,5 +1,6 @@
-import { GalaxyMap, STAR_COLORS, System } from '../model/types';
+import { GalaxyMap, STAR_COLORS, StarType, System } from '../model/types';
 import { MARKER_BY_ID } from '../model/markers';
+import { normalizeStars, starBaseOffset, STAR_SIZE_BY_ID } from '../model/stars';
 import { Camera } from './camera';
 import { TerritoryRenderer } from './territories';
 import { mulberry32 } from '../util/rng';
@@ -96,27 +97,59 @@ export class Renderer {
     }
     ctx.stroke();
 
-    // Star dots, one path per colour. Multi-star systems draw a little cluster.
-    const dotR = 1.9;
-    for (const [starType, list] of buckets) {
-      ctx.fillStyle = STAR_COLORS[starType as keyof typeof STAR_COLORS];
+    // Star dots. Each star has its own type (colour) & size, so gather all
+    // bodies into per-colour buckets and stroke one path per colour. Positions
+    // and radii are in screen px, so stars do NOT scale with zoom.
+    const SPREAD = 3.2; // cluster spread (screen px)
+    const BASE_R = 2.0; // base star-dot radius (screen px)
+    const bodyBuckets = new Map<StarType, number[]>();
+    const addBodies = (sp: SP, baseR: number) => {
+      const bodies = normalizeStars(sp.s);
+      const n = bodies.length;
+      for (let i = 0; i < n; i++) {
+        const b = bodies[i];
+        const [bx, by] = starBaseOffset(i, n);
+        const x = sp.p.x + bx * SPREAD + (n > 1 ? b.jx : 0);
+        const y = sp.p.y + by * SPREAD + (n > 1 ? b.jy : 0);
+        const r = baseR * (STAR_SIZE_BY_ID[b.size]?.mult ?? 1);
+        let arr = bodyBuckets.get(b.type);
+        if (!arr) { arr = []; bodyBuckets.set(b.type, arr); }
+        arr.push(x, y, r);
+      }
+    };
+    for (const list of buckets.values()) {
+      for (const sp of list) addBodies(sp, BASE_R);
+    }
+    for (const [type, flat] of bodyBuckets) {
+      ctx.fillStyle = STAR_COLORS[type];
       ctx.beginPath();
-      for (const { s, p } of list) {
-        addStarCluster(ctx, p.x, p.y, s.stars ?? 1, dotR);
+      for (let i = 0; i < flat.length; i += 3) {
+        const x = flat[i], y = flat[i + 1], r = flat[i + 2];
+        ctx.moveTo(x + r, y);
+        ctx.arc(x, y, r, 0, Math.PI * 2);
       }
       ctx.fill();
     }
 
-    // Capitals: brighter cluster + ring.
-    for (const { s, p } of capitals) {
-      ctx.fillStyle = STAR_COLORS[s.starType];
-      ctx.beginPath();
-      addStarCluster(ctx, p.x, p.y, s.stars ?? 1, 2.6);
-      ctx.fill();
+    // Capitals: their own (brighter) cluster + a ring around the centre.
+    for (const sp of capitals) {
+      const bodies = normalizeStars(sp.s);
+      const n = bodies.length;
+      for (let i = 0; i < n; i++) {
+        const b = bodies[i];
+        const [bx, by] = starBaseOffset(i, n);
+        const x = sp.p.x + bx * SPREAD + (n > 1 ? b.jx : 0);
+        const y = sp.p.y + by * SPREAD + (n > 1 ? b.jy : 0);
+        const r = 2.7 * (STAR_SIZE_BY_ID[b.size]?.mult ?? 1);
+        ctx.fillStyle = STAR_COLORS[b.type];
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.strokeStyle = 'rgba(255,255,255,0.85)';
       ctx.lineWidth = 1.2;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+      ctx.arc(sp.p.x, sp.p.y, 7, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -342,32 +375,4 @@ export class Renderer {
 
 function clamp(v: number, lo: number, hi: number) {
   return v < lo ? lo : v > hi ? hi : v;
-}
-
-/** Add `n` (1–4) star dots as a small cluster to the current path. */
-function addStarCluster(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  n: number,
-  r: number
-) {
-  const count = n <= 1 ? 1 : Math.min(4, n);
-  if (count === 1) {
-    ctx.moveTo(x + r, y);
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    return;
-  }
-  const d = r * 1.5; // cluster spread
-  const rr = r * 0.85; // slightly smaller dots when clustered
-  const offs =
-    count === 2
-      ? [[-d, 0], [d, 0]]
-      : count === 3
-        ? [[0, -d], [-d, d * 0.8], [d, d * 0.8]]
-        : [[-d, -d], [d, -d], [-d, d], [d, d]];
-  for (const [ox, oy] of offs) {
-    ctx.moveTo(x + ox + rr, y + oy);
-    ctx.arc(x + ox, y + oy, rr, 0, Math.PI * 2);
-  }
 }

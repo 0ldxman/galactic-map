@@ -10,16 +10,11 @@ import {
 } from './types';
 import { makeId, Rng } from '../util/rng';
 import { systemName } from '../generation/names';
+import { makeStarCluster } from './stars';
 
-// Non-deterministic RNG for hand-created systems (auto name / type / star count).
+// Non-deterministic RNG for hand-created systems (auto name / stars).
 const editorRng = new Rng((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0);
-const RANDOM_STAR_TYPES: StarType[] = ['yellow', 'red', 'blue', 'white', 'neutron'];
-const RANDOM_STAR_WEIGHTS = [30, 34, 12, 14, 6];
-
-/** 1–4 stars, heavily weighted toward single/binary systems. */
-function randomStarCount(): number {
-  return editorRng.weighted([1, 2, 3, 4], [60, 27, 9, 4]);
-}
+const editorRand = () => editorRng.float();
 
 export type Tool =
   | 'select'
@@ -100,18 +95,17 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   addSystem: (x, y, opts) => {
     const id = makeId('sys');
+    const stars = opts?.stars ?? makeStarCluster(editorRand);
     const system: System = {
       id,
       name: opts?.name ?? systemName(editorRng),
       x,
       y,
-      starType:
-        (opts?.starType as StarType) ??
-        editorRng.weighted(RANDOM_STAR_TYPES, RANDOM_STAR_WEIGHTS),
+      starType: (opts?.starType as StarType) ?? stars[0].type,
       ownerId: opts?.ownerId ?? null,
       influence: opts?.influence ?? 34,
       markers: opts?.markers ?? [],
-      stars: opts?.stars ?? randomStarCount(),
+      stars,
     };
     set((s) => {
       const map = { ...s.map, systems: { ...s.map.systems, [id]: system } };

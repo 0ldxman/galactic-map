@@ -180,6 +180,16 @@ html, body, #root {
 .seed-row { display: flex; gap: 6px; }
 .seed-row input { flex: 1; }
 
+/* Star editor */
+.star-list { display: flex; flex-direction: column; gap: 4px; }
+.star-row { display: flex; align-items: center; gap: 5px; }
+.star-row select { flex: 1; min-width: 0; }
+.star-dot {
+  width: 12px; height: 12px; border-radius: 50%;
+  flex: 0 0 12px; box-shadow: 0 0 5px rgba(255,255,255,0.4);
+}
+.star-row .mini-btn { padding: 3px 6px; }
+
 /* Segmented control */
 .seg { display: flex; gap: 4px; }
 .seg-btn {

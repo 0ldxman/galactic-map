@@ -1,4 +1,5 @@
-import { GalaxyMap, System, Empire, Hyperlane, StarType, MAP_VERSION } from '../model/types';
+import { GalaxyMap, System, Empire, Hyperlane, MAP_VERSION } from '../model/types';
+import { makeStarCluster } from '../model/stars';
 import { Rng, makeId } from '../util/rng';
 import { GalaxyShape, densityAt, CORE_OUTER, GAP_OUTER } from './shapes';
 import { poissonDisk } from './poisson';
@@ -14,9 +15,6 @@ export interface GenerateParams {
   arms?: number;
   radius?: number;
 }
-
-const STAR_TYPES: StarType[] = ['yellow', 'red', 'blue', 'white', 'neutron', 'blackhole'];
-const STAR_WEIGHTS = [30, 34, 12, 14, 6, 4];
 
 export function generateGalaxy(params: GenerateParams): GalaxyMap {
   const {
@@ -75,15 +73,16 @@ export function generateGalaxy(params: GenerateParams): GalaxyMap {
     const id = makeId('sys');
     systemIds.push(id);
     const ownerIdx = owner[i];
+    const stars = makeStarCluster(() => rng.float());
     systems[id] = {
       id,
       name: systemName(rng),
       x: points[i].x,
       y: points[i].y,
-      starType: rng.weighted(STAR_TYPES, STAR_WEIGHTS),
+      starType: stars[0].type,
       ownerId: ownerIdx >= 0 ? empireIds[ownerIdx] : null,
       influence,
-      stars: rng.weighted([1, 2, 3, 4], [60, 27, 9, 4]),
+      stars,
     };
   }
 

@@ -1,8 +1,9 @@
 import { useEditor } from '../model/store';
-import { StarType } from '../model/types';
+import { StarType, StarBody, STAR_COLORS } from '../model/types';
 import { MARKER_TYPES } from '../model/markers';
+import { STAR_SIZES, normalizeStars, makeStarBody } from '../model/stars';
 
-const STAR_TYPES: StarType[] = ['yellow', 'red', 'blue', 'white', 'neutron', 'blackhole'];
+const BODY_TYPES: StarType[] = ['yellow', 'red', 'blue', 'white', 'neutron'];
 
 export function Inspector() {
   const map = useEditor((s) => s.map);
@@ -30,6 +31,18 @@ export function Inspector() {
     ? map.empires[sys.ownerId]?.capitalId === sys.id
     : false;
 
+  const bodies = normalizeStars(sys);
+  const commitStars = (next: StarBody[]) =>
+    updateSystem(sys.id, { stars: next, starType: next[0].type });
+  const setStar = (i: number, patch: Partial<StarBody>) =>
+    commitStars(bodies.map((b, idx) => (idx === i ? { ...b, ...patch } : b)));
+  const addStar = () => {
+    if (bodies.length < 4) commitStars([...bodies, makeStarBody(Math.random)]);
+  };
+  const removeStar = (i: number) => {
+    if (bodies.length > 1) commitStars(bodies.filter((_, idx) => idx !== i));
+  };
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -45,35 +58,54 @@ export function Inspector() {
           onChange={(e) => updateSystem(sys.id, { name: e.target.value })}
         />
       </label>
-      <label className="field">
-        <span>Star type</span>
-        <select
-          value={sys.starType}
-          onChange={(e) =>
-            updateSystem(sys.id, { starType: e.target.value as StarType })
-          }
-        >
-          {STAR_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-      </label>
       <div className="field">
-        <span>Stars in system</span>
-        <div className="seg">
-          {[1, 2, 3, 4].map((n) => (
-            <button
-              key={n}
-              type="button"
-              className={`seg-btn${(sys.stars ?? 1) === n ? ' active' : ''}`}
-              onClick={() => updateSystem(sys.id, { stars: n })}
-            >
-              {n}
-            </button>
+        <span>Stars ({bodies.length}/4)</span>
+        <div className="star-list">
+          {bodies.map((b, i) => (
+            <div className="star-row" key={i}>
+              <span
+                className="star-dot"
+                style={{ background: STAR_COLORS[b.type] }}
+              />
+              <select
+                value={b.type}
+                onChange={(e) => setStar(i, { type: e.target.value as StarType })}
+              >
+                {BODY_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={b.size}
+                onChange={(e) => setStar(i, { size: e.target.value })}
+              >
+                {STAR_SIZES.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="mini-btn danger"
+                title="Remove star"
+                disabled={bodies.length <= 1}
+                onClick={() => removeStar(i)}
+              >
+                ✕
+              </button>
+            </div>
           ))}
         </div>
+        <button
+          className="mini-btn"
+          style={{ marginTop: 4 }}
+          disabled={bodies.length >= 4}
+          onClick={addStar}
+        >
+          + Add star
+        </button>
       </div>
       <label className="field">
         <span>Owner</span>
