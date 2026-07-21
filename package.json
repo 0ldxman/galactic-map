@@ -6,11 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:all": "npm run build && npm run build:server",
+    "server": "node server/dist/server/src/index.js"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.2",
+    "@fastify/static": "^10.1.0",
+    "@fastify/websocket": "^11.3.0",
     "d3-delaunay": "^6.0.4",
     "dompurify": "^3.4.12",
+    "fastify": "^5.10.0",
     "marked": "^18.0.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -18,6 +25,7 @@
   },
   "devDependencies": {
     "@types/d3-delaunay": "^6.0.4",
+    "@types/node": "^26.1.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

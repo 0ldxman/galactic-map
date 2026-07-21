@@ -8,19 +8,42 @@ import { DisplayPanel } from './DisplayPanel';
 import { ToolOptions } from './ToolOptions';
 import { GenerateDialog } from './GenerateDialog';
 import { ExportDialog } from './ExportDialog';
+import { CloudPanel } from './CloudPanel';
+import { ViewerPanel } from './ViewerPanel';
 import { generateGalaxy } from '../generation/generateGalaxy';
 import { loadAutosave, saveAutosave } from '../persistence/io';
+import { api, readViewerRoute } from '../net/api';
+import { connectMap, useSync } from '../net/sync';
 
 export function App() {
   const [showGenerate, setShowGenerate] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const setMap = useEditor((s) => s.setMap);
   const bootstrapped = useRef(false);
+  // A `/v/<slug>` URL means this tab is a viewer for a published map.
+  const viewerRoute = useRef(readViewerRoute()).current;
+  const [viewerMeta, setViewerMeta] = useState<{ title: string; owner: string } | null>(
+    null
+  );
+  const [viewerError, setViewerError] = useState<string | null>(null);
 
-  // On first load: restore autosave, else generate a starter galaxy.
+  // On first load: open the published map, restore the autosave, or generate
+  // a starter galaxy.
   useEffect(() => {
     if (bootstrapped.current) return;
     bootstrapped.current = true;
+
+    if (viewerRoute) {
+      // The REST call is only for the title and a decent error message; the
+      // map itself arrives over the socket, which then keeps it up to date.
+      api
+        .publicMap(viewerRoute.slug, viewerRoute.token)
+        .then((r) => setViewerMeta({ title: r.meta.title, owner: r.meta.owner }))
+        .catch((e) => setViewerError((e as Error).message));
+      connectMap({ slug: viewerRoute.slug, token: viewerRoute.token });
+      return;
+    }
+
     // `true` clears the undo history: this is opening a document, not an edit.
     const saved = loadAutosave();
     if (saved) {
@@ -37,12 +60,15 @@ export function App() {
         true
       );
     }
-  }, [setMap]);
+  }, [setMap, viewerRoute]);
 
-  // Debounced autosave on every mutation.
+  // Debounced autosave of the local draft. A map opened from the server is
+  // saved there instead, and must not overwrite whatever is in this browser.
   useEffect(() => {
+    if (viewerRoute) return;
     let t: number | undefined;
     const unsub = useEditor.subscribe((s) => {
+      if (useSync.getState().mapId) return;
       window.clearTimeout(t);
       const map = s.map;
       t = window.setTimeout(() => saveAutosave(map), 600);
@@ -51,7 +77,7 @@ export function App() {
       window.clearTimeout(t);
       unsub();
     };
-  }, []);
+  }, [viewerRoute]);
 
   // Keyboard shortcuts.
   useEffect(() => {
@@ -117,6 +143,29 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  if (viewerRoute) {
+    return (
+      <div className="app">
+        <MapCanvas />
+        <aside className="sidebar">
+          {viewerError ? (
+            <div className="panel">
+              <div className="panel-header">
+                <span>Cannot open this map</span>
+              </div>
+              <div className="error-note">{viewerError}</div>
+            </div>
+          ) : (
+            <ViewerPanel
+              title={viewerMeta?.title ?? 'Loading…'}
+              owner={viewerMeta?.owner ?? '…'}
+            />
+          )}
+        </aside>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <Toolbar
@@ -125,6 +174,7 @@ export function App() {
       />
       <MapCanvas />
       <aside className="sidebar">
+        <CloudPanel />
         <ToolOptions />
         <EmpirePanel />
         <Inspector />

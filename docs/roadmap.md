@@ -75,15 +75,26 @@ the borders and moving a system no longer rebakes the nebula texture.
 - **Legend** collected from the entities inside the exported rectangle, so it
   lists only what that particular image shows, and honours the layer toggles.
 
-## Phase D — server
+## Phase D — server ✅
 
-- Two compose services: `web` (nginx, proxies `/api`) and `api` (Fastify +
-  SQLite on a volume). Nginx Proxy Manager keeps pointing at `web`.
-- Tables: `users`, `maps(id, slug, title, owner_id, data, public, view_token,
-  updated_at)`, `revisions(map_id, seq, op, author, ts)`.
-- Live op-sync over WebSocket, co-editor cursors and selections.
-- Publishing: `/v/<slug>` boots the app in viewer mode; anonymous sockets are
-  receive-only server-side.
+- **One container, one process** (Fastify serves the built app *and* the API),
+  replacing the nginx image. Nginx Proxy Manager keeps pointing at the same
+  container on port 80; it just needs Websockets Support enabled.
+- **Storage is JSON files on a volume**, not SQLite — deliberately. At this
+  scale it is enough, a backup is `cp -r`, and it avoids compiling native
+  bindings inside an emulated arm64 build. Everything goes through
+  `server/src/store.ts`, so a real database later touches only that file.
+- **Accounts** with scrypt-hashed passwords (no native crypto dependency),
+  session cookies, and registration gated by invite codes — the first code is
+  printed to the log on first start.
+- **Live op-sync**: a room per open map holds the authoritative document,
+  applies incoming ops with the *same* `applyOps` the browser uses, relays them
+  to the other clients and saves debounced. Co-editor cursors included.
+- Local undo stays local: remote ops are applied through `applyRemote`, which
+  neither records history nor echoes back.
+- **Publishing**: `/v/<slug>?t=<token>` boots the app in viewer mode. Read-only
+  is enforced on the server — a guest socket may watch but its ops are dropped,
+  so nothing can be smuggled past the UI.
 
 ## Phase E — later
 

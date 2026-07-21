@@ -4,6 +4,7 @@ import { Annotation, ID } from '../model/types';
 import { liveCamera } from '../render/camera';
 import { Renderer, Marquee } from '../render/renderer';
 import { makeClip, parseClip, Clip } from '../model/clipboard';
+import { useSync, sendCursor } from '../net/sync';
 
 const HIT_RADIUS = 11; // screen px
 const LINE_HIT = 7; // screen px for hyperlane picking
@@ -67,6 +68,7 @@ export function MapCanvas() {
   const marqueeRef = useRef<Marquee | null>(null);
   const draftRef = useRef<Annotation | null>(null);
   const cursorRef = useRef({ x: 0, y: 0, inside: false });
+  const lastCursorSent = useRef(0);
   const dragRef = useRef<DragState>({
     mode: 'none',
     originX: 0,
@@ -102,6 +104,7 @@ export function MapCanvas() {
     const ctx = canvas.getContext('2d')!;
     const cam = camRef.current;
     let raf = 0;
+    let lastPeers = useSync.getState().peers;
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -134,6 +137,14 @@ export function MapCanvas() {
         }
       }
 
+      // Co-editors' cursors move without any local edit, so their arrival has
+      // to mark the canvas dirty on its own.
+      const peers = useSync.getState().peers;
+      if (peers !== lastPeers) {
+        lastPeers = peers;
+        dirtyRef.current = true;
+      }
+
       if (dirtyRef.current) {
         const c = cursorRef.current;
         rendererRef.current.draw(ctx, map, cam, {
@@ -145,6 +156,7 @@ export function MapCanvas() {
           deferTerritory: dragRef.current.mode === 'move',
           marquee: marqueeRef.current,
           draftAnnotation: draftRef.current,
+          peers: peers.filter((p) => p.id !== useSync.getState().selfId),
           brush:
             st.tool === 'nebula' && c.inside
               ? { x: c.x, y: c.y, r: st.brushSize * cam.zoom }
@@ -605,6 +617,12 @@ export function MapCanvas() {
     const w = cam.screenToWorld(x, y);
     const wasInside = cursorRef.current.inside;
     cursorRef.current = { x, y, inside: true };
+    // Share the pointer with the room, but not at pointermove rate.
+    const now = performance.now();
+    if (now - lastCursorSent.current > 60) {
+      lastCursorSent.current = now;
+      sendCursor(w.x, w.y);
+    }
     // The brush preview and the polygon rubber-band follow the cursor.
     if (state.tool === 'nebula' || draftRef.current || !wasInside) {
       dirtyRef.current = true;

@@ -239,6 +239,52 @@ html, body, #root {
   background: #171a2c;
 }
 
+/* Server / live sync */
+.sync-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  background: #0f1120;
+  border: 1px solid var(--border);
+  font-size: 11px;
+}
+.sync-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: 0 0 8px; }
+.sync-live .sync-dot { background: #49c26b; box-shadow: 0 0 6px #49c26b; }
+.sync-connecting .sync-dot { background: #e0b23d; }
+.sync-error .sync-dot { background: #e0483d; }
+.sync-text { flex: 1; min-width: 0; color: var(--muted); }
+
+.peer-list { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.peer {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--text);
+}
+.peer-dot { width: 7px; height: 7px; border-radius: 50%; }
+
+.map-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: #1b2140;
+  color: #8fb0ff;
+  border: 1px solid #2c356b;
+}
+
+.kv { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 2px 0; }
+.kv > span { color: var(--muted); }
+
 /* Radio list (export dialog) */
 .radio-row {
   display: flex;

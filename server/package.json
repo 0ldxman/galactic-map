@@ -1,0 +1,5 @@
+{
+  "//": "Marks the compiled server output as CommonJS; deps live in the root package.json.",
+  "type": "commonjs",
+  "private": true
+}

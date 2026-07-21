@@ -1,11 +1,19 @@
 services:
   galactic-map:
-    image: ghcr.io/0ldxman/galactic-map:latest   # замени OWNER/REPO на свой (напр. ghcr.io/davidmezaku/galactic_map)
+    image: ghcr.io/0ldxman/galactic-map:latest
     container_name: galactic-map
     restart: unless-stopped
+    volumes:
+      # Accounts, invite codes and every saved map live here. Back this up.
+      - galactic-map-data:/data
     networks:
       - web_network
-    # No `ports:` — NPM reaches it over web_network at http://galactic-map:80
+    # No `ports:` — NPM reaches it over web_network at http://galactic-map:80.
+    # The app and the API share that one port, WebSocket included, so the proxy
+    # host needs "Websockets Support" enabled.
+
+volumes:
+  galactic-map-data:
 
 networks:
   web_network:

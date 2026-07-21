@@ -56,6 +56,13 @@ export interface EditorState {
   past: Op[][];
   future: Op[][];
 
+  /**
+   * True when this client may look but not touch (a published map opened by a
+   * guest). Enforced at the point every edit funnels through, so no UI path can
+   * slip an edit past it — the server refuses them as well.
+   */
+  readOnly: boolean;
+
   tool: Tool;
   /** ids of every selected system */
   selection: ID[];
@@ -103,6 +110,13 @@ export interface EditorState {
 
   // --- whole-map ---
   setMap: (map: GalaxyMap, resetHistory?: boolean) => void;
+  setReadOnly: (v: boolean) => void;
+  /**
+   * Apply ops that arrived from another editor. They are not recorded in this
+   * client's history (undo stays local to your own edits) and are not sent back
+   * out, which is what stops an op from ping-ponging around the room.
+   */
+  applyRemote: (ops: Op[]) => void;
 
   // --- systems ---
   addSystem: (x: number, y: number, opts?: Partial<System>) => ID;
@@ -163,6 +177,15 @@ const EMPIRE_PALETTE = [
 /** Ops accumulated by the open transaction, if any (see beginTx/endTx). */
 let txOps: Op[] | null = null;
 
+/** Listeners fed every op this client commits — the live-sync sender hooks in. */
+type OpListener = (ops: Op[]) => void;
+const opListeners = new Set<OpListener>();
+
+export function subscribeOps(fn: OpListener): () => void {
+  opListeners.add(fn);
+  return () => opListeners.delete(fn);
+}
+
 function pushHistory(past: Op[][], ops: Op[]): Op[][] {
   const next = [...past, compressOps(ops)];
   return next.length > HISTORY_MAX ? next.slice(next.length - HISTORY_MAX) : next;
@@ -171,18 +194,19 @@ function pushHistory(past: Op[][], ops: Op[]): Op[][] {
 export const useEditor = create<EditorState>((set, get) => {
   /** Apply ops to the map and record them for undo (or into the open tx). */
   const commit = (ops: Op[]) => {
-    if (ops.length === 0) return;
+    if (ops.length === 0 || get().readOnly) return;
     if (txOps) {
       txOps.push(...ops);
       set((s) => ({ map: applyOps(s.map, ops), revision: s.revision + 1 }));
-      return;
+    } else {
+      set((s) => ({
+        map: applyOps(s.map, ops),
+        revision: s.revision + 1,
+        past: pushHistory(s.past, ops),
+        future: [],
+      }));
     }
-    set((s) => ({
-      map: applyOps(s.map, ops),
-      revision: s.revision + 1,
-      past: pushHistory(s.past, ops),
-      future: [],
-    }));
+    for (const fn of opListeners) fn(ops);
   };
 
   /** Ops that delete a system together with everything referencing it. */
@@ -228,6 +252,7 @@ export const useEditor = create<EditorState>((set, get) => {
     revision: 0,
     past: [],
     future: [],
+    readOnly: false,
 
     tool: 'select',
     selection: [],
@@ -277,9 +302,12 @@ export const useEditor = create<EditorState>((set, get) => {
 
     undo: () =>
       set((s) => {
+        if (s.readOnly) return {};
         const last = s.past[s.past.length - 1];
         if (!last) return {};
-        const map = applyOps(s.map, invertOps(last));
+        const inverse = invertOps(last);
+        const map = applyOps(s.map, inverse);
+        for (const fn of opListeners) fn(inverse);
         return {
           map,
           revision: s.revision + 1,
@@ -292,9 +320,11 @@ export const useEditor = create<EditorState>((set, get) => {
 
     redo: () =>
       set((s) => {
+        if (s.readOnly) return {};
         const next = s.future[s.future.length - 1];
         if (!next) return {};
         const map = applyOps(s.map, next);
+        for (const fn of opListeners) fn(next);
         return {
           map,
           revision: s.revision + 1,
@@ -302,6 +332,23 @@ export const useEditor = create<EditorState>((set, get) => {
           future: s.future.slice(0, -1),
           selection: s.selection.filter((id) => map.systems[id]),
           connectFromId: null,
+        };
+      }),
+
+    setReadOnly: (v) => set({ readOnly: v }),
+
+    applyRemote: (ops) =>
+      set((s) => {
+        if (ops.length === 0) return {};
+        const map = applyOps(s.map, ops);
+        return {
+          map,
+          revision: s.revision + 1,
+          selection: s.selection.filter((id) => map.systems[id]),
+          selectedEntity:
+            s.selectedEntity && !map[s.selectedEntity.c][s.selectedEntity.id]
+              ? null
+              : s.selectedEntity,
         };
       }),
 

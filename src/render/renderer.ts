@@ -34,6 +34,13 @@ export interface RenderOptions {
   draftAnnotation?: Annotation | null;
   /** brush circle to show while the nebula tool is active */
   brush?: { x: number; y: number; r: number } | null;
+  /** other people in the room, at their last reported world position */
+  peers?: readonly {
+    id: string;
+    name: string;
+    color: string;
+    cursor?: { x: number; y: number };
+  }[];
   /** true while dragging a system: skip the (costly) border rebuild until drop */
   deferTerritory?: boolean;
   /** leave the background empty (image export with a transparent backdrop) */
@@ -275,7 +282,46 @@ export class Renderer {
       ctx.setLineDash([]);
     }
 
+    if (opts.peers?.length) this.drawPeers(ctx, cam, opts.peers);
     if (opts.marquee) this.drawMarquee(ctx, opts.marquee);
+  }
+
+  /** Co-editors' pointers, so you can see where everyone is working. */
+  private drawPeers(
+    ctx: CanvasRenderingContext2D,
+    cam: Camera,
+    peers: NonNullable<RenderOptions['peers']>
+  ) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.font = '11px system-ui, sans-serif';
+    for (const p of peers) {
+      if (!p.cursor) continue;
+      const s = cam.worldToScreen(p.cursor.x, p.cursor.y);
+      if (s.x < -50 || s.y < -50 || s.x > cam.viewW + 50 || s.y > cam.viewH + 50) {
+        continue;
+      }
+      ctx.fillStyle = p.color;
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y);
+      ctx.lineTo(s.x, s.y + 13);
+      ctx.lineTo(s.x + 4, s.y + 9.5);
+      ctx.lineTo(s.x + 9, s.y + 9);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      const w = ctx.measureText(p.name).width + 10;
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.roundRect(s.x + 11, s.y + 4, w, 15, 4);
+      ctx.fill();
+      ctx.fillStyle = '#0b0e18';
+      ctx.fillText(p.name, s.x + 16, s.y + 12);
+    }
+    ctx.textBaseline = 'alphabetic';
   }
 
   /** Special objects: link arcs first, then icons, then names. */
