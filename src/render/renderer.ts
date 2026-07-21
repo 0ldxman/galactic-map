@@ -100,25 +100,16 @@ export class Renderer {
     // Star dots. Each star has its own type (colour) & size, so gather all
     // bodies into per-colour buckets and stroke one path per colour. Positions
     // and radii are in screen px, so stars do NOT scale with zoom.
-    const SPREAD = 3.2; // cluster spread (screen px)
-    const BASE_R = 2.0; // base star-dot radius (screen px)
+    const BASE_R = 1.8; // base star-dot radius (screen px)
     const bodyBuckets = new Map<StarType, number[]>();
-    const addBodies = (sp: SP, baseR: number) => {
-      const bodies = normalizeStars(sp.s);
-      const n = bodies.length;
-      for (let i = 0; i < n; i++) {
-        const b = bodies[i];
-        const [bx, by] = starBaseOffset(i, n);
-        const x = sp.p.x + bx * SPREAD + (n > 1 ? b.jx : 0);
-        const y = sp.p.y + by * SPREAD + (n > 1 ? b.jy : 0);
-        const r = baseR * (STAR_SIZE_BY_ID[b.size]?.mult ?? 1);
-        let arr = bodyBuckets.get(b.type);
-        if (!arr) { arr = []; bodyBuckets.set(b.type, arr); }
-        arr.push(x, y, r);
-      }
-    };
     for (const list of buckets.values()) {
-      for (const sp of list) addBodies(sp, BASE_R);
+      for (const sp of list) {
+        for (const pos of layoutStars(sp, BASE_R)) {
+          let arr = bodyBuckets.get(pos.type);
+          if (!arr) { arr = []; bodyBuckets.set(pos.type, arr); }
+          arr.push(pos.x, pos.y, pos.r);
+        }
+      }
     }
     for (const [type, flat] of bodyBuckets) {
       ctx.fillStyle = STAR_COLORS[type];
@@ -133,17 +124,10 @@ export class Renderer {
 
     // Capitals: their own (brighter) cluster + a ring around the centre.
     for (const sp of capitals) {
-      const bodies = normalizeStars(sp.s);
-      const n = bodies.length;
-      for (let i = 0; i < n; i++) {
-        const b = bodies[i];
-        const [bx, by] = starBaseOffset(i, n);
-        const x = sp.p.x + bx * SPREAD + (n > 1 ? b.jx : 0);
-        const y = sp.p.y + by * SPREAD + (n > 1 ? b.jy : 0);
-        const r = 2.7 * (STAR_SIZE_BY_ID[b.size]?.mult ?? 1);
-        ctx.fillStyle = STAR_COLORS[b.type];
+      for (const pos of layoutStars(sp, 2.4)) {
+        ctx.fillStyle = STAR_COLORS[pos.type];
         ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, pos.r, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.strokeStyle = 'rgba(255,255,255,0.85)';
@@ -375,4 +359,38 @@ export class Renderer {
 
 function clamp(v: number, lo: number, hi: number) {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+interface StarDot { x: number; y: number; r: number; type: StarType }
+
+/**
+ * Screen positions & radii for a system's stars. The cluster spread scales with
+ * the largest star present, so a giant/supergiant pushes its neighbours out
+ * instead of covering them; the stored per-star jitter is scaled to that spread.
+ */
+function layoutStars(
+  sp: { s: System; p: { x: number; y: number } },
+  baseR: number
+): StarDot[] {
+  const bodies = normalizeStars(sp.s);
+  const n = bodies.length;
+  const radii = bodies.map((b) => baseR * (STAR_SIZE_BY_ID[b.size]?.mult ?? 1));
+  let maxR = 0;
+  for (const r of radii) if (r > maxR) maxR = r;
+  // Distance of an offset unit from centre: enough that even two big stars on
+  // opposite sides clear each other.
+  const spread = n <= 1 ? 0 : maxR * 1.35 + 1.6;
+  const jit = spread * 0.4;
+  const out: StarDot[] = [];
+  for (let i = 0; i < n; i++) {
+    const b = bodies[i];
+    const [bx, by] = starBaseOffset(i, n);
+    out.push({
+      x: sp.p.x + bx * spread + (n > 1 ? b.jx * jit : 0),
+      y: sp.p.y + by * spread + (n > 1 ? b.jy * jit : 0),
+      r: radii[i],
+      type: b.type,
+    });
+  }
+  return out;
 }

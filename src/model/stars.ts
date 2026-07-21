@@ -7,12 +7,14 @@ export interface StarSize {
   mult: number;
 }
 
-// Real-ish size classes, smallest to largest.
+// Real-ish size classes, smallest to largest. Kept in a fairly tight range so
+// even a supergiant stays a modest dot (stars are a constant on-screen size, so
+// an absolutely-large dot would dominate the view when zoomed out).
 export const STAR_SIZES: StarSize[] = [
-  { id: 'dwarf', label: 'Dwarf', mult: 0.68 },
+  { id: 'dwarf', label: 'Dwarf', mult: 0.72 },
   { id: 'main', label: 'Main sequence', mult: 1.0 },
-  { id: 'giant', label: 'Giant', mult: 1.55 },
-  { id: 'supergiant', label: 'Supergiant', mult: 2.3 },
+  { id: 'giant', label: 'Giant', mult: 1.3 },
+  { id: 'supergiant', label: 'Supergiant', mult: 1.7 },
 ];
 export const STAR_SIZE_BY_ID: Record<string, StarSize> = Object.fromEntries(
   STAR_SIZES.map((s) => [s.id, s])
@@ -38,13 +40,18 @@ function wpick<T>(rand: Rand, arr: readonly T[], w: readonly number[]): T {
   return arr[arr.length - 1];
 }
 
-/** A single random star (optionally forcing its spectral type). */
+/**
+ * A single random star (optionally forcing its spectral type). `jx`/`jy` are a
+ * normalised jitter in roughly [-0.5, 0.5]; the renderer scales them by the
+ * cluster's spread (which itself grows with the biggest star present), so the
+ * jitter stays proportional and big stars never sit on top of small ones.
+ */
 export function makeStarBody(rand: Rand, type?: StarType): StarBody {
   return {
     type: type ?? wpick(rand, BODY_TYPES, BODY_TYPE_W),
     size: wpick(rand, SIZE_IDS, SIZE_W),
-    jx: (rand() - 0.5) * 2.8,
-    jy: (rand() - 0.5) * 2.8,
+    jx: rand() - 0.5,
+    jy: rand() - 0.5,
   };
 }
 
