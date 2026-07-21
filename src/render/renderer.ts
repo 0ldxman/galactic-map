@@ -8,6 +8,8 @@ export interface RenderOptions {
   connectFromId: string | null;
   /** store revision — lets the territory cache know when to rebuild */
   revision: number;
+  /** true while dragging a system: skip the (costly) border rebuild until drop */
+  deferTerritory?: boolean;
 }
 
 interface BgStar {
@@ -18,7 +20,7 @@ interface BgStar {
   color: string;
 }
 
-const EMPIRE_LABEL_FONT = `italic 600 %PXpx Georgia, 'Iowan Old Style', 'Times New Roman', serif`;
+const EMPIRE_LABEL_FONT = `700 %PXpx Tektur, 'Tektur', system-ui, sans-serif`;
 
 export class Renderer {
   readonly territory = new TerritoryRenderer();
@@ -49,8 +51,8 @@ export class Renderer {
 
     const systems = Object.values(map.systems);
 
-    // Territory raster (rebuilt only when the map changes; blitted here).
-    this.territory.update(systems, map.empires, opts.revision);
+    // Territory borders (rebuilt only when the map changes; drawn as vectors).
+    this.territory.update(systems, map.empires, opts.revision, opts.deferTerritory);
     this.territory.draw(ctx, cam);
 
     // Hyperlanes — thin schematic circuit lines.
@@ -158,10 +160,14 @@ export class Renderer {
       const emp = map.empires[label.empireId];
       if (!emp) continue;
       const worldR = Math.sqrt(label.area / Math.PI);
-      // Size tracks the region (from the borders), NOT the zoom.
-      const fontPx = clamp(worldR * 0.14, 11, 42);
-      // Hide when the region is too small on screen to hold the label.
+      // Size tracks the region's on-screen size so the name keeps filling its
+      // territory as you zoom (it must not shrink relative to the land). Each
+      // region/enclave is sized from its own area; longer names get a smaller
+      // font so they still fit.
       const screenR = worldR * cam.zoom;
+      const nameLen = Math.max(6, emp.name.length);
+      const fontPx = clamp((screenR * 2.4) / nameLen, 11, 96);
+      // Hide when the region is too small on screen to hold the label.
       const fit = clamp((screenR - fontPx * 0.55) / (fontPx * 0.55), 0, 1);
       const op = zoomFade * fit;
       if (op <= 0.03) continue;

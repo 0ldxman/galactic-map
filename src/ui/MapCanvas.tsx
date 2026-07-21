@@ -47,6 +47,10 @@ export function MapCanvas() {
     const unsub = useEditor.subscribe(() => {
       dirtyRef.current = true;
     });
+    // Repaint once the Tektur webfont finishes loading so labels pick it up.
+    document.fonts?.ready.then(() => {
+      dirtyRef.current = true;
+    });
     return unsub;
   }, []);
 
@@ -92,6 +96,9 @@ export function MapCanvas() {
           selectedSystemId,
           connectFromId,
           revision,
+          // While dragging a system, keep the stale borders (rebuilding them
+          // every frame is what makes dragging lag); they snap back on release.
+          deferTerritory: dragRef.current.mode === 'move',
         });
         dirtyRef.current = false;
       }
@@ -255,8 +262,11 @@ export function MapCanvas() {
 
   const onPointerUp = (e: React.PointerEvent) => {
     (e.target as Element).releasePointerCapture?.(e.pointerId);
+    const wasMoving = dragRef.current.mode === 'move';
     dragRef.current.mode = 'none';
     dragRef.current.systemId = null;
+    // A finished move deferred its border rebuild — redraw once to apply it.
+    if (wasMoving) dirtyRef.current = true;
   };
 
   const onWheel = (e: React.WheelEvent) => {

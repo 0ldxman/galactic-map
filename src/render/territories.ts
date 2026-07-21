@@ -18,57 +18,74 @@ export interface TerritoryLabel {
   area: number; // world units squared (drives label size)
 }
 
+/** One empire's borders, as smoothed vector loops in WORLD coordinates. */
+interface Region {
+  path: Path2D; // world-space, evenodd (holes = enclaves of others)
+  fill: string;
+  glow: string;
+  edge: string;
+}
+
+interface Pt {
+  x: number;
+  y: number;
+}
+
 /**
- * Renders Stellaris-style political borders — but the expensive part (the
- * per-pixel field, threshold, smoothing, connected-component and border passes)
- * runs in WORLD space and is cached. It is only rebuilt when the map changes
- * (throttled), never on pan/zoom. Every frame we just blit the cached raster
- * through the camera transform, which is cheap.
+ * Stellaris-style political borders.
  *
- * Ownership at each pixel is the argmax of the empires' influence fields, where
- * each empire's field is the pixel-wise MAX (not sum) of its systems' discs — so
- * borders sit on the midpoint between neighbouring systems of different empires,
- * with no speckle from overlapping rims.
+ * Ownership is first solved on a coarse WORLD-space grid (each pixel = the
+ * argmax of the empires' influence fields, so borders fall on the midpoint
+ * between rival systems). But instead of blitting that grid as a raster — which
+ * looks like blurry soap when magnified — we trace its region boundaries into
+ * smoothed vector loops (marching-squares edge tracing + Chaikin) and cache them
+ * as `Path2D` in world coordinates. Every frame we fill/stroke those paths under
+ * the camera transform with a constant 2px screen-space outline, so borders stay
+ * razor-crisp at any zoom while per-frame cost is just a couple of path fills.
+ *
+ * The whole thing is rebuilt only when the map changes (tracked by `revision`,
+ * and skippable while dragging), never on pan/zoom.
  */
 export class TerritoryRenderer {
-  private raster = document.createElement('canvas');
-  private rctx = this.raster.getContext('2d')!;
   private field = document.createElement('canvas');
   private fctx = this.field.getContext('2d', { willReadFrequently: true })!;
   private blur = document.createElement('canvas');
   private bctx = this.blur.getContext('2d', { willReadFrequently: true })!;
 
-  private minX = 0;
-  private minY = 0;
-  private ppw = 1; // raster pixels per world unit
-  private rw = 0;
-  private rh = 0;
-  private hasContent = false;
-
+  private regions: Region[] = [];
   labels: TerritoryLabel[] = [];
+
   /** True when a newer revision is waiting on the rebuild throttle. */
   pending = false;
   private builtRevision = -1;
   private lastBuild = 0;
 
   private readonly THRESHOLD = 46;
-  private readonly FILL_ALPHA = 0.13;
-  private readonly EDGE_ALPHA = 0.9;
-  private readonly FRAGMENT_MIN = 28; // px: drop tiny speckle regions
-  private readonly LABEL_MIN = 520; // px: only label regions at least this big
+  private readonly FILL_ALPHA = 0.12;
+  private readonly FRAGMENT_MIN = 24; // grid cells: drop tiny speckle regions
+  private readonly LABEL_MIN = 300; // grid cells: smallest region that gets a name
 
-  /** Rebuild the cached raster if the map changed (throttled). */
-  update(systems: System[], empires: Record<string, Empire>, revision: number) {
-    (window as unknown as { __tlog: unknown }).__tlog = { revision, built: this.builtRevision };
+  /** Rebuild the cached borders if the map changed (throttled; skippable). */
+  update(
+    systems: System[],
+    empires: Record<string, Empire>,
+    revision: number,
+    defer = false
+  ) {
     if (revision === this.builtRevision) {
       this.pending = false;
       return;
     }
-    (window as unknown as { __tbuilds: number }).__tbuilds =
-      ((window as unknown as { __tbuilds: number }).__tbuilds || 0) + 1;
+    if (defer) {
+      // e.g. while dragging a system — keep the stale borders, rebuild on drop.
+      this.pending = true;
+      return;
+    }
+    // Coalesce rapid bursts of edits (e.g. paint-dragging) so we rebuild at most
+    // every ~120ms. The threshold must exceed the build time or it never gates.
     const now = performance.now();
-    if (this.builtRevision !== -1 && now - this.lastBuild < 110) {
-      this.pending = true; // too soon — keep the stale raster for now
+    if (this.builtRevision !== -1 && now - this.lastBuild < 120) {
+      this.pending = true;
       return;
     }
     this.pending = false;
@@ -79,13 +96,11 @@ export class TerritoryRenderer {
 
   private build(systems: System[], empires: Record<string, Empire>) {
     this.labels = [];
+    this.regions = [];
     const owned = systems.filter(
       (s) => s.ownerId && empires[s.ownerId] && s.influence > 0
     );
-    if (owned.length === 0) {
-      this.hasContent = false;
-      return;
-    }
+    if (owned.length === 0) return;
 
     // World bounds of all territory, padded by the largest influence radius.
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -102,16 +117,14 @@ export class TerritoryRenderer {
     const worldW = maxX - minX;
     const worldH = maxY - minY;
 
-    // Resolution: cap the longest side so rebuild cost stays bounded.
-    const ppw = Math.min(1.2, 1200 / Math.max(worldW, worldH));
+    // Solve ownership on a coarse grid; vector smoothing hides the coarseness.
+    const ppw = Math.min(0.9, 850 / Math.max(worldW, worldH));
     const rw = Math.max(1, Math.round(worldW * ppw));
     const rh = Math.max(1, Math.round(worldH * ppw));
-    this.minX = minX; this.minY = minY; this.ppw = ppw; this.rw = rw; this.rh = rh;
 
     if (this.field.width !== rw || this.field.height !== rh) {
       this.field.width = rw; this.field.height = rh;
       this.blur.width = rw; this.blur.height = rh;
-      this.raster.width = rw; this.raster.height = rh;
     }
     const px = rw * rh;
     const best = new Float32Array(px);
@@ -232,50 +245,130 @@ export class TerritoryRenderer {
       }
     }
 
-    // Compose raster: translucent fill + crisp outline at region borders.
-    const result = this.rctx.createImageData(rw, rh);
-    const rd = result.data;
-    const fillA = Math.round(255 * this.FILL_ALPHA);
-    const edgeA = Math.round(255 * this.EDGE_ALPHA);
-    for (let y = 0; y < rh; y++) {
-      for (let x = 0; x < rw; x++) {
-        const p = y * rw + x;
-        const o = smooth[p];
-        if (o < 0) continue;
-        let border = false;
-        for (let dy = -1; dy <= 1 && !border; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            if (!dx && !dy) continue;
-            const nx = x + dx, ny = y + dy;
-            const no = nx < 0 || ny < 0 || nx >= rw || ny >= rh ? -1 : smooth[ny * rw + nx];
-            if (no !== o) { border = true; break; }
-          }
-        }
-        const [er, eg, eb] = empireRgb[o];
-        const i = p * 4;
-        if (border) {
-          rd[i] = Math.min(255, er + 70);
-          rd[i + 1] = Math.min(255, eg + 70);
-          rd[i + 2] = Math.min(255, eb + 70);
-          rd[i + 3] = edgeA;
-        } else {
-          rd[i] = er; rd[i + 1] = eg; rd[i + 2] = eb; rd[i + 3] = fillA;
-        }
-      }
+    // Trace each empire's cleaned region into smoothed vector loops.
+    for (let e = 0; e < K; e++) {
+      const path = this.traceRegion(smooth, rw, rh, e, minX, minY, ppw);
+      if (!path) continue;
+      const [r, g, b] = empireRgb[e];
+      const br = Math.min(255, r + 90);
+      const bg = Math.min(255, g + 90);
+      const bb = Math.min(255, b + 90);
+      this.regions.push({
+        path,
+        fill: `rgba(${r},${g},${b},${this.FILL_ALPHA})`,
+        glow: `rgba(${br},${bg},${bb},0.22)`,
+        edge: `rgba(${br},${bg},${bb},0.95)`,
+      });
     }
-    this.rctx.putImageData(result, 0, 0);
-    this.hasContent = true;
   }
 
-  /** Blit the cached world-space raster through the camera. Cheap per frame. */
-  draw(target: CanvasRenderingContext2D, cam: Camera) {
-    if (!this.hasContent) return;
-    const p0 = cam.worldToScreen(this.minX, this.minY);
-    const w = (this.rw / this.ppw) * cam.zoom;
-    const h = (this.rh / this.ppw) * cam.zoom;
-    if (p0.x + w < 0 || p0.x > cam.viewW || p0.y + h < 0 || p0.y > cam.viewH) return;
-    target.imageSmoothingEnabled = true;
-    target.imageSmoothingQuality = 'high';
-    target.drawImage(this.raster, 0, 0, this.rw, this.rh, p0.x, p0.y, w, h);
+  /**
+   * Marching-squares edge tracing: walk the unit edges between cells of empire
+   * `e` and everything else into closed directed loops (inside kept on the
+   * right), convert to world coordinates and round the staircase with Chaikin.
+   */
+  private traceRegion(
+    smooth: Int16Array,
+    rw: number,
+    rh: number,
+    e: number,
+    minX: number,
+    minY: number,
+    ppw: number
+  ): Path2D | null {
+    const RW1 = rw + 1;
+    // startVertexId -> list of endVertexIds (a vertex may branch at checkerboard
+    // corners, so store all out-edges and consume them by popping).
+    const out = new Map<number, number[]>();
+    const add = (ax: number, ay: number, bx: number, by: number) => {
+      const s = ay * RW1 + ax;
+      const arr = out.get(s);
+      if (arr) arr.push(by * RW1 + bx);
+      else out.set(s, [by * RW1 + bx]);
+    };
+    for (let y = 0; y < rh; y++) {
+      for (let x = 0; x < rw; x++) {
+        if (smooth[y * rw + x] !== e) continue;
+        if (y === 0 || smooth[(y - 1) * rw + x] !== e) add(x, y, x + 1, y); // top
+        if (x === rw - 1 || smooth[y * rw + x + 1] !== e) add(x + 1, y, x + 1, y + 1); // right
+        if (y === rh - 1 || smooth[(y + 1) * rw + x] !== e) add(x + 1, y + 1, x, y + 1); // bottom
+        if (x === 0 || smooth[y * rw + x - 1] !== e) add(x, y + 1, x, y); // left
+      }
+    }
+    if (out.size === 0) return null;
+
+    const path = new Path2D();
+    let any = false;
+    const invPpw = 1 / ppw;
+    for (const [s0, arr0] of out) {
+      while (arr0.length) {
+        const loop: number[] = [s0];
+        let cur = arr0.pop()!;
+        loop.push(cur);
+        let guard = 0;
+        while (cur !== s0 && guard++ < 1_000_000) {
+          const nexts = out.get(cur);
+          if (!nexts || nexts.length === 0) break;
+          cur = nexts.pop()!;
+          loop.push(cur);
+        }
+        // loop[last] === s0; convert (minus the duplicated closing vertex).
+        const pts: Pt[] = [];
+        for (let i = 0; i < loop.length - 1; i++) {
+          const v = loop[i];
+          const cx = v % RW1;
+          const cy = (v / RW1) | 0;
+          pts.push({ x: minX + cx * invPpw, y: minY + cy * invPpw });
+        }
+        if (pts.length < 2) continue;
+        const sm = pts.length >= 4 ? chaikin(chaikin(pts)) : pts;
+        path.moveTo(sm[0].x, sm[0].y);
+        for (let i = 1; i < sm.length; i++) path.lineTo(sm[i].x, sm[i].y);
+        path.closePath();
+        any = true;
+      }
+    }
+    return any ? path : null;
   }
+
+  /** Fill + stroke the cached world-space borders under the camera transform. */
+  draw(target: CanvasRenderingContext2D, cam: Camera) {
+    if (this.regions.length === 0) return;
+    const z = cam.zoom;
+    target.save();
+    target.translate(cam.viewW / 2 - cam.x * z, cam.viewH / 2 - cam.y * z);
+    target.scale(z, z);
+    target.lineJoin = 'round';
+    target.lineCap = 'round';
+
+    for (const rg of this.regions) {
+      target.fillStyle = rg.fill;
+      target.fill(rg.path, 'evenodd');
+    }
+    // Soft outer glow, then the crisp line — both at fixed screen widths.
+    for (const rg of this.regions) {
+      target.strokeStyle = rg.glow;
+      target.lineWidth = 5 / z;
+      target.stroke(rg.path);
+    }
+    for (const rg of this.regions) {
+      target.strokeStyle = rg.edge;
+      target.lineWidth = 2 / z;
+      target.stroke(rg.path);
+    }
+    target.restore();
+  }
+}
+
+/** One Chaikin corner-cutting pass on a closed polygon. */
+function chaikin(pts: Pt[]): Pt[] {
+  const n = pts.length;
+  const out: Pt[] = new Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % n];
+    out[i * 2] = { x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 };
+    out[i * 2 + 1] = { x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 };
+  }
+  return out;
 }
