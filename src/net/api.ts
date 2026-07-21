@@ -12,6 +12,8 @@ export interface RemoteMap {
   title: string;
   owner: string;
   ownerId: string;
+  /** everyone besides the owner who may edit this map */
+  editors: { id: string; name: string }[];
   published: boolean;
   viewToken: string;
   updatedAt: number;
@@ -63,6 +65,14 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(patch),
     }),
+
+  setAccess: (id: string, editors: string[]) =>
+    call<{ map: RemoteMap }>(`/api/maps/${id}/access`, {
+      method: 'PUT',
+      body: JSON.stringify({ editors }),
+    }),
+
+  listUsers: () => call<{ users: { id: string; name: string }[] }>('/api/users'),
 
   deleteMap: (id: string) =>
     call<{ ok: true }>(`/api/maps/${id}`, { method: 'DELETE' }),

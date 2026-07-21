@@ -67,12 +67,23 @@ docker compose up -d
 ```
 
 State lives in the `/data` volume — accounts, invite codes and one JSON file per
-map. **Back that volume up.** On first start the server prints an invite code to
-its log; registration requires one, so the instance is not open to the world:
+map. **Back that volume up.**
 
-```bash
-docker compose logs galactic-map | grep invite
-```
+### Adding people
+
+Registration is invite-only, so the instance is not open to the world.
+
+1. On first start the server prints a code to its log — the account created with
+   it becomes the admin:
+   ```bash
+   docker compose logs galactic-map | grep invite
+   ```
+2. The admin opens **Server → Invite codes → + New code** and sends the code on.
+3. The new person registers with a name, a password and that code. Each code is
+   good for exactly one registration.
+4. To let them edit one of your maps, open it and add them under
+   **Server → Who can edit**. Removing them takes effect immediately, even if
+   they are connected at that moment.
 
 Behind Nginx Proxy Manager, enable **Websockets Support** on the proxy host —
 live collaboration and published maps both use `/api/sync`.

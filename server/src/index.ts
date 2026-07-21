@@ -25,6 +25,9 @@ import {
   writeMap,
   canEdit,
   userName,
+  listUsers,
+  userExists,
+  getUser,
   newId,
   User,
   MapMeta,
@@ -36,6 +39,7 @@ import {
   applyFrom,
   setCursor,
   presenceColor,
+  updateAccess,
   flushAll,
   Client,
 } from './rooms';
@@ -66,6 +70,7 @@ function publicMeta(m: MapMeta) {
     title: m.title,
     owner: userName(m.ownerId),
     ownerId: m.ownerId,
+    editors: m.editors.map((id) => ({ id, name: userName(id) })),
     published: m.published,
     viewToken: m.viewToken,
     updatedAt: m.updatedAt,
@@ -114,6 +119,12 @@ async function main() {
   app.get('/api/me', async (req) => {
     const user = me(req);
     return { user: user ? publicUser(user) : null };
+  });
+
+  app.get('/api/users', async (req, reply) => {
+    const user = me(req);
+    if (!user) return reply.code(401).send({ error: 'Sign in first.' });
+    return { users: listUsers() };
   });
 
   app.get('/api/invites', async (req, reply) => {
@@ -180,6 +191,29 @@ async function main() {
       });
     }
     return { map: publicMeta(getMeta(id)!) };
+  });
+
+  /** Who may edit this map, besides its owner. Owner (or an admin) decides. */
+  app.put('/api/maps/:id/access', async (req, reply) => {
+    const user = me(req);
+    const { id } = req.params as { id: string };
+    const meta = getMeta(id);
+    if (!meta) return reply.code(404).send({ error: 'No such map.' });
+    if (meta.ownerId !== user?.id && !user?.admin) {
+      return reply.code(403).send({ error: 'Only the owner can share a map.' });
+    }
+    const { editors } = req.body as { editors?: string[] };
+    if (!Array.isArray(editors)) {
+      return reply.code(400).send({ error: 'Expected a list of user ids.' });
+    }
+    // The owner is implicitly an editor; keep them out of the list, and drop
+    // ids of accounts that no longer exist.
+    const cleaned = [...new Set(editors)].filter(
+      (uid) => uid !== meta.ownerId && userExists(uid)
+    );
+    const updated = updateMeta(id, { editors: cleaned })!;
+    updateAccess(id, (uid) => canEdit(updated, getUser(uid)));
+    return { map: publicMeta(updated) };
   });
 
   app.delete('/api/maps/:id', async (req, reply) => {

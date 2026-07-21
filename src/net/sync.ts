@@ -118,6 +118,7 @@ function open() {
       ops?: Op[];
       users?: Peer[];
       you?: { id: string; canEdit: boolean };
+      canEdit?: boolean;
       id?: string;
       x?: number;
       y?: number;
@@ -148,6 +149,11 @@ function open() {
       }
       case 'ops':
         if (msg.ops) useEditor.getState().applyRemote(msg.ops);
+        break;
+      case 'access':
+        // The owner just granted or revoked editing while we were connected.
+        useEditor.getState().setReadOnly(!msg.canEdit);
+        set({ viewer: !msg.canEdit });
         break;
       case 'presence':
         set({ peers: msg.users ?? [] });

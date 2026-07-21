@@ -86,7 +86,10 @@ the borders and moving a system no longer rebakes the nebula texture.
   `server/src/store.ts`, so a real database later touches only that file.
 - **Accounts** with scrypt-hashed passwords (no native crypto dependency),
   session cookies, and registration gated by invite codes — the first code is
-  printed to the log on first start.
+  printed to the log on first start, and the account that uses it is the admin.
+  Only admins mint further codes (flip this if it ever becomes a nuisance).
+- **Per-map access**: the owner picks co-editors from the account list.
+  Revoking takes effect on the open socket, not just on the next reload.
 - **Live op-sync**: a room per open map holds the authoritative document,
   applies incoming ops with the *same* `applyOps` the browser uses, relays them
   to the other clients and saves debounced. Co-editor cursors included.

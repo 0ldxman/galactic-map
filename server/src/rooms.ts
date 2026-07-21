@@ -134,6 +134,26 @@ export function setCursor(room: Room, client: Client, x: number, y: number) {
   }
 }
 
+/**
+ * Re-decide who may edit, for everyone currently in the room. Without this a
+ * user whose access was just revoked would keep editing until they reloaded.
+ */
+export function updateAccess(
+  mapId: string,
+  decide: (userId: string | null) => boolean
+) {
+  const room = rooms.get(mapId);
+  if (!room) return;
+  for (const c of room.clients.values()) {
+    // A guest on the public link is never promoted by an access change.
+    const can = c.userId ? decide(c.userId) : false;
+    if (can === c.canEdit) continue;
+    c.canEdit = can;
+    c.send({ t: 'access', canEdit: can });
+  }
+  broadcastPresence(room);
+}
+
 /** Persist every open room — used on shutdown. */
 export function flushAll() {
   for (const room of rooms.values()) flush(room);

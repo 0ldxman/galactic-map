@@ -282,6 +282,34 @@ html, body, #root {
   border: 1px solid #2c356b;
 }
 
+.chip-x {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 0 0 2px;
+  font-size: 11px;
+  line-height: 1;
+}
+.chip-x:hover { color: #ff8a7e; }
+.chip-x:disabled { opacity: 0.5; cursor: default; }
+
+.invite-list { display: flex; flex-direction: column; gap: 4px; }
+.invite {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  background: #0f1120;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 6px;
+}
+.invite code { font-size: 12px; letter-spacing: 1px; color: #cfe0ff; }
+.invite-who { flex: 1; min-width: 0; color: var(--muted); }
+.invite.used { opacity: 0.55; }
+.invite.used code { text-decoration: line-through; }
+
 .kv { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 2px 0; }
 .kv > span { color: var(--muted); }
 

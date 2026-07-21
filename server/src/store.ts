@@ -176,6 +176,21 @@ export function userName(id: string) {
   return db.users[id]?.name ?? 'unknown';
 }
 
+export function getUser(id: string | null): User | null {
+  return id ? db.users[id] ?? null : null;
+}
+
+/** Everyone with an account — used to pick co-editors for a map. */
+export function listUsers() {
+  return Object.values(db.users)
+    .map((u) => ({ id: u.id, name: u.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function userExists(id: string) {
+  return !!db.users[id];
+}
+
 // ---- maps ------------------------------------------------------------------
 
 function slugify(title: string) {

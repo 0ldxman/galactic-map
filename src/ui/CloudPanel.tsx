@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useEditor } from '../model/store';
 import { useSync, connectMap, disconnect } from '../net/sync';
 import { api, RemoteMap, SessionUser, viewerLink } from '../net/api';
+import { AccessSection } from './AccessSection';
+import { InviteSection } from './InviteSection';
 
 /** Sign-in, the list of maps on the server, live status and publishing. */
 export function CloudPanel() {
@@ -262,20 +264,16 @@ export function CloudPanel() {
         </div>
       )}
 
-      {user.admin && (
-        <button
-          className="mini-btn"
-          style={{ marginTop: 8 }}
-          onClick={() =>
-            guard(async () => {
-              const r = await api.createInvite();
-              alert(`New invite code: ${r.code}`);
-            })
-          }
-        >
-          + Invite code
-        </button>
+      {openMap && (
+        <AccessSection
+          map={openMap}
+          me={user}
+          onChanged={refresh}
+          onError={setError}
+        />
       )}
+
+      {user.admin && <InviteSection onError={setError} />}
 
       {error && <div className="error-note">{error}</div>}
     </div>
