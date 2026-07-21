@@ -27,8 +27,15 @@ const EMPIRE_LABEL_FONT = `700 %PXpx Tektur, 'Tektur', system-ui, sans-serif`;
 export class Renderer {
   readonly territory = new TerritoryRenderer();
   private bgStars: BgStar[] = [];
+  // Pre-rendered soft glow sprite per star colour (drawn additively per star).
+  private glowSprites: Record<string, HTMLCanvasElement> = {};
 
   constructor() {
+    for (const [type, color] of Object.entries(STAR_COLORS)) {
+      if (type === 'blackhole') continue;
+      this.glowSprites[type] = makeGlowSprite(color);
+    }
+
     // A cool, sparse starfield in world space (parallaxes with the map).
     const rnd = mulberry32(1234567);
     const span = 4200;
@@ -111,6 +118,22 @@ export class Renderer {
         }
       }
     }
+    // Additive glow halo under the cores (only for stars big enough on screen
+    // to warrant it — far-out specks skip it, which keeps this cheap).
+    ctx.globalCompositeOperation = 'lighter';
+    for (const [type, flat] of bodyBuckets) {
+      const sprite = this.glowSprites[type];
+      if (!sprite) continue;
+      for (let i = 0; i < flat.length; i += 3) {
+        const r = flat[i + 2];
+        if (r < GLOW_MIN) continue;
+        const gr = r * GLOW_SCALE;
+        ctx.drawImage(sprite, flat[i] - gr, flat[i + 1] - gr, gr * 2, gr * 2);
+      }
+    }
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Bright cores, one path per colour.
     for (const [type, flat] of bodyBuckets) {
       ctx.fillStyle = STAR_COLORS[type];
       ctx.beginPath();
@@ -124,10 +147,20 @@ export class Renderer {
 
     // Capitals: their own (brighter) cluster + a ring around the centre.
     for (const sp of capitals) {
-      for (const pos of layoutStars(sp, CAPITAL_WORLD_R, cam.zoom)) {
-        ctx.fillStyle = STAR_COLORS[pos.type];
+      const dots = layoutStars(sp, CAPITAL_WORLD_R, cam.zoom);
+      ctx.globalCompositeOperation = 'lighter';
+      for (const d of dots) {
+        if (d.r < GLOW_MIN) continue;
+        const sprite = this.glowSprites[d.type];
+        if (!sprite) continue;
+        const gr = d.r * GLOW_SCALE;
+        ctx.drawImage(sprite, d.x - gr, d.y - gr, gr * 2, gr * 2);
+      }
+      ctx.globalCompositeOperation = 'source-over';
+      for (const d of dots) {
+        ctx.fillStyle = STAR_COLORS[d.type];
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, pos.r, 0, Math.PI * 2);
+        ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.strokeStyle = 'rgba(255,255,255,0.85)';
@@ -368,6 +401,35 @@ const STAR_WORLD_R = 4.6;
 const CAPITAL_WORLD_R = 6.2;
 // Never let a star vanish completely when zoomed far out.
 const STAR_MIN_PX = 0.55;
+// Glow: halo radius as a multiple of the core radius; skip tiny far-out stars.
+const GLOW_SCALE = 3.4;
+const GLOW_MIN = 1.6; // px: skip glow for far-out specks (keeps overview cheap)
+
+/** A soft radial glow sprite tinted by `color`, used additively per star. */
+function makeGlowSprite(color: string): HTMLCanvasElement {
+  const S = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  const [r, gr, b] = hexToRgb(color);
+  const grad = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  grad.addColorStop(0, `rgba(${r},${gr},${b},0.85)`);
+  grad.addColorStop(0.22, `rgba(${r},${gr},${b},0.42)`);
+  grad.addColorStop(0.55, `rgba(${r},${gr},${b},0.12)`);
+  grad.addColorStop(1, `rgba(${r},${gr},${b},0)`);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, S, S);
+  return c;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace('#', '');
+  const n = parseInt(
+    h.length === 3 ? h.split('').map((ch) => ch + ch).join('') : h,
+    16
+  );
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
 
 /**
  * Screen positions & radii for a system's stars. Radii and the cluster layout
