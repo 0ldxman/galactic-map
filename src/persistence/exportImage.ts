@@ -1,0 +1,174 @@
+import { GalaxyMap, ID } from '../model/types';
+import { resolveDisplay } from '../model/display';
+import { Camera } from '../render/camera';
+import { Renderer } from '../render/renderer';
+import { collectLegend, drawLegend, WorldRect } from '../render/legend';
+
+export type ExportMode = 'viewport' | 'galaxy' | 'empire';
+
+export interface ImageExportOptions {
+  mode: ExportMode;
+  /** the empire to keep in colour when mode === 'empire' */
+  empireId?: ID | null;
+  /** longest side of the output image, in px */
+  maxSize: number;
+  transparent?: boolean;
+  legend?: boolean;
+  title?: string;
+  filename?: string;
+}
+
+/** Browsers refuse canvases beyond roughly this on a side. */
+const CANVAS_LIMIT = 16384;
+
+/** World bounds of everything drawn on the map, or null if it is empty. */
+export function mapBounds(map: GalaxyMap, empireId?: ID | null): WorldRect | null {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const add = (x: number, y: number, pad = 0) => {
+    if (x - pad < minX) minX = x - pad;
+    if (y - pad < minY) minY = y - pad;
+    if (x + pad > maxX) maxX = x + pad;
+    if (y + pad > maxY) maxY = y + pad;
+  };
+
+  for (const s of Object.values(map.systems)) {
+    // When focusing one empire, frame that empire — everything else is context
+    // that may or may not fall inside the shot.
+    if (empireId && s.ownerId !== empireId) continue;
+    add(s.x, s.y, s.influence);
+  }
+  if (!empireId) {
+    for (const n of Object.values(map.nebulae)) {
+      for (const b of n.blobs) add(b.x, b.y, b.r);
+    }
+    for (const o of Object.values(map.objects)) add(o.x, o.y, 10);
+    for (const r of Object.values(map.regions)) add(r.x, r.y, r.size);
+    for (const a of Object.values(map.annotations)) {
+      for (const p of a.points) add(p.x, p.y, 10);
+    }
+  }
+  if (!isFinite(minX)) return null;
+
+  // A little air around the content.
+  const padX = (maxX - minX) * 0.04 + 30;
+  const padY = (maxY - minY) * 0.04 + 30;
+  return {
+    minX: minX - padX,
+    minY: minY - padY,
+    maxX: maxX + padX,
+    maxY: maxY + padY,
+  };
+}
+
+/** The world rectangle a camera currently shows. */
+export function viewportBounds(cam: Camera): WorldRect {
+  const a = cam.screenToWorld(0, 0);
+  const b = cam.screenToWorld(cam.viewW, cam.viewH);
+  return { minX: a.x, minY: a.y, maxX: b.x, maxY: b.y };
+}
+
+/**
+ * Recolour every empire except `focusId` in neutral grey. Doing it on a copy of
+ * the map — rather than teaching the renderer about a "focus" mode — keeps the
+ * drawing code unaware of exports; it just draws the map it is given.
+ */
+function greyOthers(map: GalaxyMap, focusId: ID): GalaxyMap {
+  const empires: GalaxyMap['empires'] = {};
+  for (const e of Object.values(map.empires)) {
+    empires[e.id] =
+      e.id === focusId
+        ? e
+        : { ...e, color: '#5d6472', borderColor: '#8b93a3' };
+  }
+  return { ...map, empires };
+}
+
+/**
+ * Render the map to an offscreen canvas. Shared by every export mode: they only
+ * differ in which world rectangle they frame and which map they hand over.
+ */
+export function renderMapToCanvas(
+  map: GalaxyMap,
+  rect: WorldRect,
+  opts: ImageExportOptions
+): HTMLCanvasElement {
+  const worldW = Math.max(1, rect.maxX - rect.minX);
+  const worldH = Math.max(1, rect.maxY - rect.minY);
+  const longest = Math.min(opts.maxSize, CANVAS_LIMIT);
+  const scale = longest / Math.max(worldW, worldH);
+  const w = Math.max(1, Math.round(worldW * scale));
+  const h = Math.max(1, Math.round(worldH * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+
+  const drawMap =
+    opts.mode === 'empire' && opts.empireId
+      ? greyOthers(map, opts.empireId)
+      : map;
+
+  const cam = new Camera();
+  cam.setViewport(w, h);
+  cam.fit(rect.minX, rect.minY, rect.maxX, rect.maxY, 1);
+
+  // A private renderer so the export never disturbs the live view's caches.
+  const renderer = new Renderer();
+  renderer.draw(ctx, drawMap, cam, {
+    selection: [],
+    selectedEntity: null,
+    connectFromId: null,
+    transparent: opts.transparent,
+  });
+
+  if (opts.legend) {
+    const dsp = resolveDisplay(map.display);
+    const groups = collectLegend(
+      map,
+      viewportBounds(cam),
+      dsp,
+      opts.mode === 'empire' ? opts.empireId : null
+    );
+    // Keep the panel a sane fraction of the image on huge exports.
+    drawLegend(ctx, groups, h, Math.max(1, Math.min(4, longest / 1400)), opts.title);
+  }
+
+  return canvas;
+}
+
+export function exportMapImage(
+  map: GalaxyMap,
+  cam: Camera,
+  opts: ImageExportOptions
+): Promise<void> {
+  // The viewport rectangle already carries the screen's aspect ratio, so every
+  // mode is just "frame this world rectangle at this resolution".
+  const rect: WorldRect | null =
+    opts.mode === 'viewport'
+      ? viewportBounds(cam)
+      : mapBounds(map, opts.mode === 'empire' ? opts.empireId : null);
+
+  if (!rect) return Promise.reject(new Error('Nothing to export.'));
+
+  const canvas = renderMapToCanvas(map, rect, opts);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(
+          new Error(
+            'The image is too large for the browser to encode — try a smaller resolution.'
+          )
+        );
+        return;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = opts.filename ?? 'galaxy.png';
+      a.click();
+      URL.revokeObjectURL(url);
+      resolve();
+    }, 'image/png');
+  });
+}

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useEditor, EntityRef } from '../model/store';
 import { Annotation, ID } from '../model/types';
-import { Camera } from '../render/camera';
+import { liveCamera } from '../render/camera';
 import { Renderer, Marquee } from '../render/renderer';
 import { makeClip, parseClip, Clip } from '../model/clipboard';
 
@@ -61,7 +61,7 @@ let localClip: Clip | null = null;
 
 export function MapCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const camRef = useRef(new Camera());
+  const camRef = useRef(liveCamera);
   const rendererRef = useRef(new Renderer());
   const dirtyRef = useRef(true);
   const marqueeRef = useRef<Marquee | null>(null);

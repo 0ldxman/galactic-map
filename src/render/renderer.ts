@@ -36,6 +36,8 @@ export interface RenderOptions {
   brush?: { x: number; y: number; r: number } | null;
   /** true while dragging a system: skip the (costly) border rebuild until drop */
   deferTerritory?: boolean;
+  /** leave the background empty (image export with a transparent backdrop) */
+  transparent?: boolean;
   /** live rubber-band rectangle, in screen px */
   marquee?: Marquee | null;
 }
@@ -94,7 +96,7 @@ export class Renderer {
     const { viewW: w, viewH: h } = cam;
     const dsp = resolveDisplay(map.display);
 
-    this.drawBackground(ctx, cam, dsp);
+    if (!opts.transparent) this.drawBackground(ctx, cam, dsp);
 
     // Nebulae sit under everything political — they are the terrain.
     this.nebulae.update(map.nebulae, opts.deferTerritory);

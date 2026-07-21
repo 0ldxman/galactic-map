@@ -239,6 +239,28 @@ html, body, #root {
   background: #171a2c;
 }
 
+/* Radio list (export dialog) */
+.radio-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.radio-row input { accent-color: var(--accent); margin: 2px 0 0; }
+.radio-row span { display: flex; flex-direction: column; gap: 1px; }
+.radio-row em { font-style: normal; color: var(--muted); font-size: 11px; }
+
+.error-note {
+  margin-top: 8px;
+  color: #ff8a7e;
+  font-size: 11px;
+  background: #2a1618;
+  border: 1px solid #5a2b2b;
+  border-radius: 5px;
+  padding: 6px 8px;
+}
+
 /* Notes / markdown */
 .notes-head {
   display: flex;

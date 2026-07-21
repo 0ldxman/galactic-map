@@ -44,23 +44,6 @@ export function exportToFile(map: GalaxyMap, filename = 'galaxy.json') {
   URL.revokeObjectURL(url);
 }
 
-/** Export the current map viewport (the live canvas) as a PNG download. */
-export function exportCanvasPng(filename = 'galaxy.png') {
-  const canvas = document.querySelector(
-    'canvas.map-canvas'
-  ) as HTMLCanvasElement | null;
-  if (!canvas) return;
-  canvas.toBlob((blob) => {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, 'image/png');
-}
-
 export function importFromFile(file: File): Promise<GalaxyMap> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

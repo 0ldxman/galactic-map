@@ -63,3 +63,10 @@ export class Camera {
     this.zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.min(zx, zy)));
   }
 }
+
+/**
+ * The camera the on-screen map is drawn with. It is shared rather than owned by
+ * the canvas component so that features outside the canvas — image export,
+ * "zoom to this system" — can read and drive the current view.
+ */
+export const liveCamera = new Camera();

@@ -7,11 +7,13 @@ import { Inspector } from './Inspector';
 import { DisplayPanel } from './DisplayPanel';
 import { ToolOptions } from './ToolOptions';
 import { GenerateDialog } from './GenerateDialog';
+import { ExportDialog } from './ExportDialog';
 import { generateGalaxy } from '../generation/generateGalaxy';
 import { loadAutosave, saveAutosave } from '../persistence/io';
 
 export function App() {
   const [showGenerate, setShowGenerate] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const setMap = useEditor((s) => s.setMap);
   const bootstrapped = useRef(false);
 
@@ -117,7 +119,10 @@ export function App() {
 
   return (
     <div className="app">
-      <Toolbar onOpenGenerate={() => setShowGenerate(true)} />
+      <Toolbar
+        onOpenGenerate={() => setShowGenerate(true)}
+        onOpenExport={() => setShowExport(true)}
+      />
       <MapCanvas />
       <aside className="sidebar">
         <ToolOptions />
@@ -139,6 +144,7 @@ export function App() {
         </div>
       </aside>
       {showGenerate && <GenerateDialog onClose={() => setShowGenerate(false)} />}
+      {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
     </div>
   );
 }

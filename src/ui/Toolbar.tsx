@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { useEditor, Tool } from '../model/store';
-import { exportToFile, exportCanvasPng, importFromFile } from '../persistence/io';
+import { exportToFile, importFromFile } from '../persistence/io';
 
 const TOOLS: { id: Tool; label: string; icon: string; key: string; hint: string }[] = [
   { id: 'select', label: 'Select', icon: '↖', key: 'V', hint: 'Select & move systems / pan' },
@@ -14,7 +14,13 @@ const TOOLS: { id: Tool; label: string; icon: string; key: string; hint: string 
   { id: 'annotate', label: 'Note', icon: '✎', key: 'T', hint: 'Draw text, arrows, lines and areas' },
 ];
 
-export function Toolbar({ onOpenGenerate }: { onOpenGenerate: () => void }) {
+export function Toolbar({
+  onOpenGenerate,
+  onOpenExport,
+}: {
+  onOpenGenerate: () => void;
+  onOpenExport: () => void;
+}) {
   const tool = useEditor((s) => s.tool);
   const setTool = useEditor((s) => s.setTool);
   const map = useEditor((s) => s.map);
@@ -97,8 +103,8 @@ export function Toolbar({ onOpenGenerate }: { onOpenGenerate: () => void }) {
         </button>
         <button
           className="tool-btn"
-          title="Export current view as PNG image"
-          onClick={() => exportCanvasPng()}
+          title="Export an image: current view, the whole galaxy, or one empire"
+          onClick={onOpenExport}
         >
           <span className="tool-icon">🖼</span>
           <span className="tool-key">PNG</span>

@@ -63,13 +63,17 @@ Also done here: render caches are now invalidated by **collection reference**
 rather than a global revision counter, so painting a nebula no longer rebuilds
 the borders and moving a system no longer rebakes the nebula texture.
 
-## Phase C — export
+## Phase C — export ✅
 
-- Refactor the renderer into a DOM-independent `renderToCanvas(map, cam, opts)`.
-- Three PNG modes: current view · whole galaxy (bbox + chosen resolution) ·
-  single empire (that empire in colour, everyone else greyed out).
-- **Legend** built from what was actually drawn, so it lists only what is
-  visible in that particular export.
+- `renderMapToCanvas(map, rect, opts)` renders into an offscreen canvas with a
+  private `Renderer`, so exporting never disturbs the live view's caches. Every
+  mode reduces to "frame this world rectangle at this resolution".
+- Three PNG modes: current view · whole galaxy · single empire. The empire mode
+  works by handing the renderer a map copy whose other empires are grey —
+  the drawing code stays unaware that exports exist.
+- Resolutions up to 16384 px, optional transparent background and title.
+- **Legend** collected from the entities inside the exported rectangle, so it
+  lists only what that particular image shows, and honours the layer toggles.
 
 ## Phase D — server
 
