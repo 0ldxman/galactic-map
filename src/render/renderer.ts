@@ -1,9 +1,19 @@
-import { GalaxyMap, STAR_COLORS, StarType, System } from '../model/types';
+import {
+  GalaxyMap,
+  STAR_COLORS,
+  StarType,
+  System,
+  Annotation,
+} from '../model/types';
 import { MARKER_BY_ID } from '../model/markers';
+import { OBJECT_BY_ID } from '../model/objects';
 import { normalizeStars, starBaseOffset, STAR_SIZE_BY_ID } from '../model/stars';
 import { DisplaySettings, resolveDisplay } from '../model/display';
+import { EntityRef } from '../model/store';
 import { Camera } from './camera';
 import { TerritoryRenderer } from './territories';
+import { NebulaRenderer } from './nebulae';
+import { drawObjectIcon } from './icons';
 import { mulberry32 } from '../util/rng';
 
 /** Screen-space rectangle of an in-progress rubber-band selection. */
@@ -17,9 +27,13 @@ export interface Marquee {
 export interface RenderOptions {
   /** ids of every selected system */
   selection: readonly string[];
+  /** the selected nebula / region / object / annotation, if any */
+  selectedEntity?: EntityRef | null;
   connectFromId: string | null;
-  /** store revision — lets the territory cache know when to rebuild */
-  revision: number;
+  /** live preview of an annotation being drawn */
+  draftAnnotation?: Annotation | null;
+  /** brush circle to show while the nebula tool is active */
+  brush?: { x: number; y: number; r: number } | null;
   /** true while dragging a system: skip the (costly) border rebuild until drop */
   deferTerritory?: boolean;
   /** live rubber-band rectangle, in screen px */
@@ -35,9 +49,21 @@ interface BgStar {
 }
 
 const EMPIRE_LABEL_FONT = `700 %PXpx Tektur, 'Tektur', system-ui, sans-serif`;
+const REGION_LABEL_FONT = `400 %PXpx Tektur, 'Tektur', system-ui, sans-serif`;
+
+/** Apply an alpha to a hex colour, for label fades. */
+function withAlpha(hex: string, a: number): string {
+  const h = hex.replace('#', '');
+  const n = parseInt(
+    h.length === 3 ? h.split('').map((c) => c + c).join('') : h,
+    16
+  );
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
 
 export class Renderer {
   readonly territory = new TerritoryRenderer();
+  readonly nebulae = new NebulaRenderer();
   private bgStars: BgStar[] = [];
   // Pre-rendered soft glow sprite per star colour (drawn additively per star).
   private glowSprites: Record<string, HTMLCanvasElement> = {};
@@ -69,14 +95,18 @@ export class Renderer {
     const dsp = resolveDisplay(map.display);
 
     this.drawBackground(ctx, cam, dsp);
+
+    // Nebulae sit under everything political — they are the terrain.
+    this.nebulae.update(map.nebulae, opts.deferTerritory);
+    if (dsp.showNebulae) this.nebulae.draw(ctx, cam);
+
     if (dsp.showGrid) this.drawGrid(ctx, cam);
+    if (dsp.showAnnotations) this.drawAnnotations(ctx, map, cam, 'below', opts);
 
     const systems = Object.values(map.systems);
 
     // Territory borders (rebuilt only when the map changes; drawn as vectors).
-    this.territory.update(
-      systems, map.empires, opts.revision, opts.deferTerritory, dsp
-    );
+    this.territory.update(map.systems, map.empires, opts.deferTerritory, dsp);
     if (dsp.showTerritories) this.territory.draw(ctx, cam);
 
     // --- Systems: cull to the viewport once, reuse the screen positions. ---
@@ -224,10 +254,276 @@ export class Renderer {
       this.drawSystemCards(ctx, onScreen, sysOp);
     }
 
+    // --- Objects, annotations and the named regions on top. ---
+    if (dsp.showObjects) this.drawObjects(ctx, map, cam, opts);
+    if (dsp.showAnnotations) this.drawAnnotations(ctx, map, cam, 'above', opts);
+
     // --- Empire labels at region centroids (main territory + each enclave). ---
     if (dsp.showEmpireNames) this.drawEmpireLabels(ctx, map, cam, dsp);
+    if (dsp.showRegions) this.drawRegionLabels(ctx, map, cam, opts);
+    if (dsp.showNebulae) this.drawNebulaLabels(ctx, map, cam);
+
+    if (opts.brush) {
+      ctx.strokeStyle = 'rgba(200,215,255,0.7)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.arc(opts.brush.x, opts.brush.y, opts.brush.r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
 
     if (opts.marquee) this.drawMarquee(ctx, opts.marquee);
+  }
+
+  /** Special objects: link arcs first, then icons, then names. */
+  private drawObjects(
+    ctx: CanvasRenderingContext2D,
+    map: GalaxyMap,
+    cam: Camera,
+    opts: RenderOptions
+  ) {
+    const objects = Object.values(map.objects);
+    if (objects.length === 0) return;
+    const { viewW: w, viewH: h } = cam;
+    const sel =
+      opts.selectedEntity?.c === 'objects' ? opts.selectedEntity.id : null;
+
+    // Paired links: a bowed dashed arc, clearly not a hyperlane.
+    ctx.setLineDash([6, 5]);
+    ctx.lineWidth = 1.2;
+    for (const o of objects) {
+      if (!o.linkedId) continue;
+      const other = map.objects[o.linkedId];
+      // Draw each pair once.
+      if (!other || other.id < o.id) continue;
+      const a = cam.worldToScreen(o.x, o.y);
+      const b = cam.worldToScreen(other.x, other.y);
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      // Bow the arc perpendicular to the chord.
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const bow = Math.min(90, len * 0.18);
+      const cx = mx - (dy / len) * bow;
+      const cy = my + (dx / len) * bow;
+      ctx.strokeStyle = (OBJECT_BY_ID[o.kind]?.color ?? '#b58cff') + 'aa';
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.quadraticCurveTo(cx, cy, b.x, b.y);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    const iconR = clamp(7 * Math.sqrt(cam.zoom), 4, 22);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const showNames = cam.zoom > 0.9;
+    ctx.font = '10px system-ui, sans-serif';
+    for (const o of objects) {
+      const p = cam.worldToScreen(o.x, o.y);
+      if (p.x < -30 || p.x > w + 30 || p.y < -30 || p.y > h + 30) continue;
+      const type = OBJECT_BY_ID[o.kind];
+      const color = o.color ?? type?.color ?? '#cfd8ff';
+      if (o.id === sel) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, iconR * 1.5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      drawObjectIcon(ctx, o.kind, p.x, p.y, iconR, color);
+      if (showNames && o.name) {
+        ctx.fillStyle = 'rgba(214,224,244,0.8)';
+        ctx.fillText(o.name, p.x, p.y + iconR + 8);
+      }
+    }
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  /** Sparse wide labels for named sectors and clusters. */
+  private drawRegionLabels(
+    ctx: CanvasRenderingContext2D,
+    map: GalaxyMap,
+    cam: Camera,
+    opts: RenderOptions
+  ) {
+    const regions = Object.values(map.regions);
+    if (regions.length === 0) return;
+    const sel =
+      opts.selectedEntity?.c === 'regions' ? opts.selectedEntity.id : null;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const r of regions) {
+      const fontPx = r.size * cam.zoom;
+      if (fontPx < 4) continue;
+      const p = cam.worldToScreen(r.x, r.y);
+      ctx.font = REGION_LABEL_FONT.replace('%PX', fontPx.toFixed(1));
+      ctx.letterSpacing = `${(r.spacing ?? 0.35) * fontPx}px`;
+      const op = clamp((fontPx - 4) / 6, 0, 1) * 0.75;
+      ctx.fillStyle = withAlpha(r.color ?? '#c9d6f2', op);
+      ctx.fillText(r.name, p.x, p.y);
+      if (r.id === sel) {
+        const wdt = ctx.measureText(r.name).width;
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(p.x - wdt / 2 - 6, p.y - fontPx * 0.75, wdt + 12, fontPx * 1.5);
+        ctx.setLineDash([]);
+      }
+      ctx.letterSpacing = '0px';
+    }
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  private drawNebulaLabels(
+    ctx: CanvasRenderingContext2D,
+    map: GalaxyMap,
+    cam: Camera
+  ) {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const n of Object.values(map.nebulae)) {
+      if (!n.showName || n.blobs.length === 0) continue;
+      // Centre of mass of the dabs, weighted by their area.
+      let sx = 0, sy = 0, sw = 0, maxR = 0;
+      for (const b of n.blobs) {
+        const wgt = b.r * b.r;
+        sx += b.x * wgt; sy += b.y * wgt; sw += wgt;
+        if (b.r > maxR) maxR = b.r;
+      }
+      if (sw === 0) continue;
+      const p = cam.worldToScreen(sx / sw, sy / sw);
+      const fontPx = clamp(maxR * 0.5 * cam.zoom, 0, 60);
+      if (fontPx < 7) continue;
+      ctx.font = REGION_LABEL_FONT.replace('%PX', fontPx.toFixed(1));
+      ctx.letterSpacing = `${fontPx * 0.2}px`;
+      ctx.fillStyle = withAlpha(n.color, 0.75);
+      ctx.fillText(n.name, p.x, p.y);
+      ctx.letterSpacing = '0px';
+    }
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  /** Free annotations on the requested layer, plus any in-progress draft. */
+  private drawAnnotations(
+    ctx: CanvasRenderingContext2D,
+    map: GalaxyMap,
+    cam: Camera,
+    layer: 'above' | 'below',
+    opts: RenderOptions
+  ) {
+    const sel =
+      opts.selectedEntity?.c === 'annotations' ? opts.selectedEntity.id : null;
+    for (const a of Object.values(map.annotations)) {
+      if ((a.layer ?? 'above') !== layer) continue;
+      this.drawAnnotation(ctx, a, cam, a.id === sel);
+    }
+    const draft = opts.draftAnnotation;
+    if (draft && (draft.layer ?? 'above') === layer) {
+      this.drawAnnotation(ctx, draft, cam, false);
+    }
+  }
+
+  private drawAnnotation(
+    ctx: CanvasRenderingContext2D,
+    a: Annotation,
+    cam: Camera,
+    selected: boolean
+  ) {
+    const pts = a.points.map((p) => cam.worldToScreen(p.x, p.y));
+    if (pts.length === 0) return;
+    ctx.strokeStyle = a.color;
+    ctx.fillStyle = a.color;
+    ctx.lineWidth = a.width;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    if (a.dashed) ctx.setLineDash([7, 5]);
+
+    switch (a.kind) {
+      case 'text': {
+        const fontPx = (a.fontSize ?? 24) * cam.zoom;
+        if (fontPx >= 4) {
+          ctx.font = REGION_LABEL_FONT.replace('%PX', fontPx.toFixed(1));
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(a.text ?? '', pts[0].x, pts[0].y);
+          ctx.textBaseline = 'alphabetic';
+        }
+        break;
+      }
+      case 'line':
+      case 'arrow': {
+        if (pts.length < 2) break;
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.stroke();
+        if (a.kind === 'arrow') {
+          const p1 = pts[pts.length - 1];
+          const p0 = pts[pts.length - 2];
+          const ang = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+          const head = Math.max(9, a.width * 4);
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(
+            p1.x - Math.cos(ang - 0.4) * head,
+            p1.y - Math.sin(ang - 0.4) * head
+          );
+          ctx.lineTo(
+            p1.x - Math.cos(ang + 0.4) * head,
+            p1.y - Math.sin(ang + 0.4) * head
+          );
+          ctx.closePath();
+          ctx.fill();
+        }
+        break;
+      }
+      case 'polygon': {
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.closePath();
+        if (a.filled) {
+          ctx.globalAlpha = 0.18;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+        ctx.stroke();
+        break;
+      }
+      case 'ellipse': {
+        if (pts.length < 2) break;
+        const cx = (pts[0].x + pts[1].x) / 2;
+        const cy = (pts[0].y + pts[1].y) / 2;
+        const rx = Math.abs(pts[1].x - pts[0].x) / 2;
+        const ry = Math.abs(pts[1].y - pts[0].y) / 2;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+        if (a.filled) {
+          ctx.globalAlpha = 0.18;
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+        ctx.stroke();
+        break;
+      }
+    }
+    ctx.setLineDash([]);
+
+    if (selected) {
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = 1;
+      for (const p of pts) {
+        ctx.beginPath();
+        ctx.rect(p.x - 3.5, p.y - 3.5, 7, 7);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
   }
 
   /** Rubber-band selection rectangle. */

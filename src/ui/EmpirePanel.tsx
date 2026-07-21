@@ -1,5 +1,6 @@
 import { useEditor } from '../model/store';
 import { lighten } from '../util/color';
+import { Notes } from './Notes';
 
 export function EmpirePanel() {
   const map = useEditor((s) => s.map);
@@ -71,10 +72,17 @@ export function EmpirePanel() {
           </div>
         ))}
       </div>
-      {activeEmpireId && (
-        <div className="panel-note">
-          Active empire is applied by the <b>Paint</b> tool and to new systems.
-        </div>
+      {activeEmpireId && map.empires[activeEmpireId] && (
+        <>
+          <div className="panel-note">
+            Active empire is applied by the <b>Paint</b> tool and to new systems.
+          </div>
+          <Notes
+            label={`Lore — ${map.empires[activeEmpireId].name}`}
+            value={map.empires[activeEmpireId].notes}
+            onChange={(v) => updateEmpire(activeEmpireId, { notes: v })}
+          />
+        </>
       )}
     </div>
   );

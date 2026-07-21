@@ -7,7 +7,11 @@ const TOOLS: { id: Tool; label: string; icon: string; key: string; hint: string 
   { id: 'add-system', label: 'Add', icon: '✦', key: 'A', hint: 'Add a star system' },
   { id: 'connect', label: 'Link', icon: '⇄', key: 'L', hint: 'Toggle a hyperlane between two systems' },
   { id: 'paint', label: 'Paint', icon: '◉', key: 'B', hint: 'Assign systems to the active empire' },
-  { id: 'delete', label: 'Erase', icon: '✕', key: 'E', hint: 'Delete a system or hyperlane' },
+  { id: 'delete', label: 'Erase', icon: '✕', key: 'E', hint: 'Delete a system, object, annotation or hyperlane' },
+  { id: 'nebula', label: 'Nebula', icon: '☁', key: 'N', hint: 'Paint a nebula (Alt-drag erases)' },
+  { id: 'region', label: 'Region', icon: '◍', key: 'R', hint: 'Place a named region / sector label' },
+  { id: 'object', label: 'Object', icon: '⬡', key: 'O', hint: 'Place a special object (wormhole, gate, debris…)' },
+  { id: 'annotate', label: 'Note', icon: '✎', key: 'T', hint: 'Draw text, arrows, lines and areas' },
 ];
 
 export function Toolbar({ onOpenGenerate }: { onOpenGenerate: () => void }) {

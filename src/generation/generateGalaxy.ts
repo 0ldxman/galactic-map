@@ -116,5 +116,9 @@ export function generateGalaxy(params: GenerateParams): GalaxyMap {
     systems,
     hyperlanes,
     empires,
+    nebulae: {},
+    regions: {},
+    objects: {},
+    annotations: {},
   };
 }

@@ -5,6 +5,7 @@ import { Toolbar } from './Toolbar';
 import { EmpirePanel } from './EmpirePanel';
 import { Inspector } from './Inspector';
 import { DisplayPanel } from './DisplayPanel';
+import { ToolOptions } from './ToolOptions';
 import { GenerateDialog } from './GenerateDialog';
 import { generateGalaxy } from '../generation/generateGalaxy';
 import { loadAutosave, saveAutosave } from '../persistence/io';
@@ -89,6 +90,10 @@ export function App() {
         case 'l': st.setTool('connect'); break;
         case 'b': st.setTool('paint'); break;
         case 'e': st.setTool('delete'); break;
+        case 'n': st.setTool('nebula'); break;
+        case 'r': st.setTool('region'); break;
+        case 'o': st.setTool('object'); break;
+        case 't': st.setTool('annotate'); break;
         case 'g': setShowGenerate(true); break;
         case 'escape':
           st.setConnectFrom(null);
@@ -96,7 +101,10 @@ export function App() {
           break;
         case 'delete':
         case 'backspace':
-          if (st.selection.length > 0) {
+          if (st.selectedEntity) {
+            e.preventDefault();
+            st.removeEnt(st.selectedEntity.c, st.selectedEntity.id);
+          } else if (st.selection.length > 0) {
             e.preventDefault();
             st.removeSystems(st.selection);
           }
@@ -112,6 +120,7 @@ export function App() {
       <Toolbar onOpenGenerate={() => setShowGenerate(true)} />
       <MapCanvas />
       <aside className="sidebar">
+        <ToolOptions />
         <EmpirePanel />
         <Inspector />
         <DisplayPanel />
@@ -120,6 +129,7 @@ export function App() {
           <ul>
             <li><b>V</b> Select · <b>A</b> Add · <b>L</b> Link</li>
             <li><b>B</b> Paint · <b>E</b> Erase · <b>G</b> Generate</li>
+            <li><b>N</b> Nebula · <b>R</b> Region · <b>O</b> Object · <b>T</b> Note</li>
             <li><b>Ctrl+Z</b> undo · <b>Ctrl+Shift+Z</b> redo</li>
             <li><b>Ctrl+C/X/V</b> copy · <b>Ctrl+D</b> duplicate</li>
             <li><b>Ctrl+A</b> select all · <b>Del</b> remove selected</li>

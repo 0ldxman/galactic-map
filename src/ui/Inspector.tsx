@@ -1,13 +1,23 @@
 import { useEditor } from '../model/store';
-import { StarType, StarBody, STAR_COLORS, System } from '../model/types';
+import {
+  StarType,
+  StarBody,
+  STAR_COLORS,
+  System,
+  OwnStatus,
+} from '../model/types';
 import { MARKER_TYPES } from '../model/markers';
+import { STATUS_TYPES } from '../model/status';
 import { STAR_SIZES, normalizeStars, makeStarBody } from '../model/stars';
+import { EntityInspector } from './EntityInspector';
+import { Notes } from './Notes';
 
 const BODY_TYPES: StarType[] = ['yellow', 'red', 'blue', 'white', 'neutron'];
 
 export function Inspector() {
   const map = useEditor((s) => s.map);
   const selection = useEditor((s) => s.selection);
+  const selectedEntity = useEditor((s) => s.selectedEntity);
   const updateSystem = useEditor((s) => s.updateSystem);
   const updateSystems = useEditor((s) => s.updateSystems);
   const setOwner = useEditor((s) => s.setOwner);
@@ -16,6 +26,10 @@ export function Inspector() {
   const removeSystems = useEditor((s) => s.removeSystems);
   const updateEmpire = useEditor((s) => s.updateEmpire);
   const toggleMarkerMany = useEditor((s) => s.toggleMarkerMany);
+
+  if (selectedEntity && map[selectedEntity.c][selectedEntity.id]) {
+    return <EntityInspector entity={selectedEntity} />;
+  }
 
   const picked = selection
     .map((id) => map.systems[id])
@@ -65,6 +79,29 @@ export function Inspector() {
             {Object.values(map.empires).map((emp) => (
               <option key={emp.id} value={emp.id}>
                 {emp.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="field">
+          <span>Hold status (applies to all)</span>
+          <select
+            value={
+              new Set(picked.map((s) => s.status ?? 'core')).size === 1
+                ? picked[0].status ?? 'core'
+                : '__mixed__'
+            }
+            onChange={(e) =>
+              updateSystems(ids, { status: e.target.value as OwnStatus })
+            }
+          >
+            {new Set(picked.map((s) => s.status ?? 'core')).size > 1 && (
+              <option value="__mixed__">— Mixed —</option>
+            )}
+            {STATUS_TYPES.map((st) => (
+              <option key={st.id} value={st.id}>
+                {st.label}
               </option>
             ))}
           </select>
@@ -209,6 +246,21 @@ export function Inspector() {
         </select>
       </label>
       <label className="field">
+        <span>Hold status</span>
+        <select
+          value={sys.status ?? 'core'}
+          onChange={(e) =>
+            updateSystem(sys.id, { status: e.target.value as OwnStatus })
+          }
+        >
+          {STATUS_TYPES.map((st) => (
+            <option key={st.id} value={st.id}>
+              {st.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
         <span>Influence: {Math.round(sys.influence)}</span>
         <input
           type="range"
@@ -229,6 +281,11 @@ export function Inspector() {
           {isCapital ? '★ Capital' : 'Set as capital'}
         </button>
       )}
+
+      <Notes
+        value={sys.notes}
+        onChange={(v) => updateSystem(sys.id, { notes: v })}
+      />
 
       <div className="field" style={{ marginTop: 4 }}>
         <span>Markers</span>

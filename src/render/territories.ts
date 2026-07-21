@@ -1,5 +1,11 @@
 import { System, Empire } from '../model/types';
 import { DisplaySettings, DEFAULT_DISPLAY } from '../model/display';
+import {
+  STATUS_TYPES,
+  STATUS_INDEX,
+  statusOf,
+  makePatternTile,
+} from '../model/status';
 import { Camera } from './camera';
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -27,6 +33,17 @@ interface Region {
   edge: string;
 }
 
+/** A non-core hold status inside an empire, drawn with a hatch over the fill. */
+interface Zone {
+  path: Path2D;
+  /** hatch tile; null for a solid status */
+  tile: HTMLCanvasElement | null;
+  /** lazily created from `tile` against the drawing context */
+  pattern: CanvasPattern | null;
+  fill: string;
+  edge: string;
+}
+
 interface Pt {
   x: number;
   y: number;
@@ -44,8 +61,9 @@ interface Pt {
  * the camera transform with a constant 2px screen-space outline, so borders stay
  * razor-crisp at any zoom while per-frame cost is just a couple of path fills.
  *
- * The whole thing is rebuilt only when the map changes (tracked by `revision`,
- * and skippable while dragging), never on pan/zoom.
+ * The whole thing is rebuilt only when the systems, empires or display settings
+ * actually change (detected by reference, and skippable while dragging), never
+ * on pan/zoom and never when an unrelated layer is edited.
  */
 export class TerritoryRenderer {
   private field = document.createElement('canvas');
@@ -54,12 +72,22 @@ export class TerritoryRenderer {
   private bctx = this.blur.getContext('2d', { willReadFrequently: true })!;
 
   private regions: Region[] = [];
+  private zones: Zone[] = [];
   labels: TerritoryLabel[] = [];
 
-  /** True when a newer revision is waiting on the rebuild throttle. */
+  /** True when a change is waiting on the rebuild throttle. */
   pending = false;
-  private builtRevision = -1;
+  /**
+   * References the cached borders were built from. The map is immutable, so a
+   * collection's reference changes only when something in it changed — which
+   * makes this a free and exact "do I need to rebuild?" test, and means edits
+   * to unrelated layers (nebulae, annotations) don't invalidate the borders.
+   */
+  private sysRef: unknown = null;
+  private empRef: unknown = null;
+  private dspRef: unknown = null;
   private lastBuild = 0;
+  private built = false;
 
   private readonly THRESHOLD = 46;
   private readonly FRAGMENT_MIN = 24; // grid cells: drop tiny speckle regions
@@ -70,14 +98,17 @@ export class TerritoryRenderer {
 
   /** Rebuild the cached borders if the map changed (throttled; skippable). */
   update(
-    systems: System[],
+    systems: Record<string, System>,
     empires: Record<string, Empire>,
-    revision: number,
     defer = false,
     display: DisplaySettings = DEFAULT_DISPLAY
   ) {
     this.display = display;
-    if (revision === this.builtRevision) {
+    if (
+      systems === this.sysRef &&
+      empires === this.empRef &&
+      display === this.dspRef
+    ) {
       this.pending = false;
       return;
     }
@@ -89,19 +120,64 @@ export class TerritoryRenderer {
     // Coalesce rapid bursts of edits (e.g. paint-dragging) so we rebuild at most
     // every ~120ms. The threshold must exceed the build time or it never gates.
     const now = performance.now();
-    if (this.builtRevision !== -1 && now - this.lastBuild < 120) {
+    if (this.built && now - this.lastBuild < 120) {
       this.pending = true;
       return;
     }
     this.pending = false;
     this.lastBuild = now;
-    this.builtRevision = revision;
-    this.build(systems, empires);
+    this.sysRef = systems;
+    this.empRef = empires;
+    this.dspRef = display;
+    this.built = true;
+    this.build(Object.values(systems), empires);
+  }
+
+  /**
+   * Blurred influence field of one group of systems: the pixel-wise MAX of
+   * their discs, so a cell takes the value of whichever system is nearest.
+   * Returns the raw RGBA bytes (only the red channel carries the value).
+   */
+  private influenceField(
+    list: System[],
+    minX: number,
+    minY: number,
+    ppw: number,
+    rw: number,
+    rh: number
+  ): Uint8ClampedArray {
+    this.fctx.globalCompositeOperation = 'source-over';
+    this.fctx.fillStyle = '#000';
+    this.fctx.fillRect(0, 0, rw, rh);
+    this.fctx.globalCompositeOperation = 'lighten';
+    for (const s of list) {
+      const cx = (s.x - minX) * ppw;
+      const cy = (s.y - minY) * ppw;
+      const r = Math.max(3, s.influence * ppw);
+      const g = this.fctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      g.addColorStop(0, '#ffffff');
+      g.addColorStop(0.7, '#e0e0e0');
+      g.addColorStop(0.9, '#525252');
+      g.addColorStop(1, '#000000');
+      this.fctx.fillStyle = g;
+      this.fctx.beginPath();
+      this.fctx.arc(cx, cy, r, 0, Math.PI * 2);
+      this.fctx.fill();
+    }
+    this.fctx.globalCompositeOperation = 'source-over';
+
+    // Light blur so the threshold contour is smooth.
+    this.bctx.clearRect(0, 0, rw, rh);
+    this.bctx.filter = 'blur(2px)';
+    this.bctx.drawImage(this.field, 0, 0);
+    this.bctx.filter = 'none';
+    return this.bctx.getImageData(0, 0, rw, rh).data;
   }
 
   private build(systems: System[], empires: Record<string, Empire>) {
     this.labels = [];
     this.regions = [];
+    this.zones = [];
     const owned = systems.filter(
       (s) => s.ownerId && empires[s.ownerId] && s.influence > 0
     );
@@ -164,34 +240,7 @@ export class TerritoryRenderer {
             ]
       );
 
-      // Empire field = pixel-wise MAX of its systems' discs (nearest-system).
-      this.fctx.globalCompositeOperation = 'source-over';
-      this.fctx.fillStyle = '#000';
-      this.fctx.fillRect(0, 0, rw, rh);
-      this.fctx.globalCompositeOperation = 'lighten';
-      for (const s of list) {
-        const cx = (s.x - minX) * ppw;
-        const cy = (s.y - minY) * ppw;
-        const r = Math.max(3, s.influence * ppw);
-        const g = this.fctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-        g.addColorStop(0, '#ffffff');
-        g.addColorStop(0.7, '#e0e0e0');
-        g.addColorStop(0.9, '#525252');
-        g.addColorStop(1, '#000000');
-        this.fctx.fillStyle = g;
-        this.fctx.beginPath();
-        this.fctx.arc(cx, cy, r, 0, Math.PI * 2);
-        this.fctx.fill();
-      }
-      this.fctx.globalCompositeOperation = 'source-over';
-
-      // Light blur so the threshold contour is smooth.
-      this.bctx.clearRect(0, 0, rw, rh);
-      this.bctx.filter = 'blur(2px)';
-      this.bctx.drawImage(this.field, 0, 0);
-      this.bctx.filter = 'none';
-
-      const fd = this.bctx.getImageData(0, 0, rw, rh).data;
+      const fd = this.influenceField(list, minX, minY, ppw, rw, rh);
       for (let i = 0, p = 0; p < px; i += 4, p++) {
         const v = fd[i];
         if (v > best[p]) { best[p] = v; owner[p] = ei; }
@@ -260,6 +309,70 @@ export class TerritoryRenderer {
           x: minX + sx / n / ppw,
           y: minY + sy / n / ppw,
           area: n / (ppw * ppw),
+        });
+      }
+    }
+
+    // --- Hold status ------------------------------------------------------
+    // Ownership is decided across ALL systems first, so borders still fall on
+    // the midpoint between rivals. Only then, inside each empire, do we ask
+    // *which* of its systems owns a cell — but only for empires that actually
+    // mix statuses, which is the rare case. For those we rerun the same field
+    // per status subgroup and take the strongest.
+    const statusIdx = new Int8Array(px); // 0 = core
+    const zoneTmp = new Int16Array(px);
+    for (let e = 0; e < K; e++) {
+      const list = byEmpire.get(empireIds[e])!;
+      const groups = new Map<number, System[]>();
+      for (const s of list) {
+        const si = STATUS_INDEX[statusOf(s)] ?? 0;
+        const arr = groups.get(si) ?? [];
+        arr.push(s);
+        groups.set(si, arr);
+      }
+      if (groups.size <= 1) {
+        const only = [...groups.keys()][0] ?? 0;
+        if (only !== 0) {
+          for (let p = 0; p < px; p++) if (smooth[p] === e) statusIdx[p] = only;
+        }
+        continue;
+      }
+      const bestStatus = new Float32Array(px);
+      for (const [si, sub] of groups) {
+        const fd = this.influenceField(sub, minX, minY, ppw, rw, rh);
+        for (let i = 0, p = 0; p < px; i += 4, p++) {
+          if (smooth[p] !== e) continue;
+          const v = fd[i];
+          if (v > bestStatus[p]) { bestStatus[p] = v; statusIdx[p] = si; }
+        }
+      }
+    }
+
+    // Non-core zones get their own traced outline, filled with a hatch.
+    for (let e = 0; e < K; e++) {
+      const present = new Set<number>();
+      for (let p = 0; p < px; p++) {
+        if (smooth[p] === e && statusIdx[p] !== 0) present.add(statusIdx[p]);
+      }
+      for (const si of present) {
+        for (let p = 0; p < px; p++) {
+          zoneTmp[p] = smooth[p] === e && statusIdx[p] === si ? e : -1;
+        }
+        const path = this.traceRegion(zoneTmp, rw, rh, e, minX, minY, ppw);
+        if (!path) continue;
+        const st = STATUS_TYPES[si];
+        const [r, g, b] = empireRgb[e];
+        const [br, bg, bb] = borderRgb[e];
+        this.zones.push({
+          path,
+          tile: makePatternTile(
+            st.pattern,
+            [br, bg, bb],
+            Math.min(0.85, this.display.fillAlpha * st.weight * 3)
+          ),
+          pattern: null,
+          fill: `rgba(${r},${g},${b},${Math.min(0.5, this.display.fillAlpha * st.weight)})`,
+          edge: `rgba(${br},${bg},${bb},${this.display.borderAlpha * 0.4})`,
         });
       }
     }
@@ -367,10 +480,32 @@ export class TerritoryRenderer {
       target.fillStyle = rg.fill;
       target.fill(rg.path, 'evenodd');
     }
+
+    // Hold-status zones on top of the plain fill.
+    for (const zn of this.zones) {
+      target.fillStyle = zn.fill;
+      target.fill(zn.path, 'evenodd');
+      if (zn.tile) {
+        if (!zn.pattern) zn.pattern = target.createPattern(zn.tile, 'repeat');
+        if (zn.pattern) {
+          // Undo the camera scale so the hatch stays a constant size on
+          // screen — like the border width, it is chart notation, not terrain.
+          zn.pattern.setTransform(new DOMMatrix([1 / z, 0, 0, 1 / z, 0, 0]));
+          target.fillStyle = zn.pattern;
+          target.fill(zn.path, 'evenodd');
+        }
+      }
+    }
+
     target.lineWidth = this.display.borderWidth / z;
     for (const rg of this.regions) {
       target.strokeStyle = rg.edge;
       target.stroke(rg.path);
+    }
+    target.lineWidth = Math.max(0.8, this.display.borderWidth * 0.5) / z;
+    for (const zn of this.zones) {
+      target.strokeStyle = zn.edge;
+      target.stroke(zn.path);
     }
     target.restore();
   }

@@ -21,6 +21,11 @@ export interface DisplaySettings {
   showEmpireNames: boolean;
   showMarkers: boolean;
 
+  showNebulae: boolean;
+  showRegions: boolean;
+  showObjects: boolean;
+  showAnnotations: boolean;
+
   /** zoom level at which system name cards start to appear */
   systemNameZoom: number;
   /** multiplier on the empire-label size derived from territory area */
@@ -43,11 +48,30 @@ export const DEFAULT_DISPLAY: DisplaySettings = {
   showEmpireNames: true,
   showMarkers: true,
 
+  showNebulae: true,
+  showRegions: true,
+  showObjects: true,
+  showAnnotations: true,
+
   systemNameZoom: 1.3,
   empireNameScale: 1,
 };
 
-/** Fill in any missing keys (older maps predate some settings). */
+let memoIn: Partial<DisplaySettings> | undefined;
+let memoOut: DisplaySettings = DEFAULT_DISPLAY;
+
+/**
+ * Fill in any missing keys (older maps predate some settings).
+ *
+ * The result is memoised on the input reference, so calling this every frame
+ * returns the *same* object until the settings actually change. Renderers rely
+ * on that: they decide whether to rebuild expensive caches by comparing
+ * references, and a fresh object each frame would defeat them.
+ */
 export function resolveDisplay(d?: Partial<DisplaySettings>): DisplaySettings {
-  return d ? { ...DEFAULT_DISPLAY, ...d } : DEFAULT_DISPLAY;
+  if (!d) return DEFAULT_DISPLAY;
+  if (d === memoIn) return memoOut;
+  memoIn = d;
+  memoOut = { ...DEFAULT_DISPLAY, ...d };
+  return memoOut;
 }

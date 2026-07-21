@@ -6,11 +6,18 @@ import {
   Hyperlane,
   ID,
   StarType,
+  Nebula,
+  MapRegion,
+  SpaceObject,
+  Annotation,
+  ObjectKind,
+  AnnotationKind,
   emptyMap,
 } from './types';
 import { DisplaySettings, resolveDisplay } from './display';
-import { Op, applyOps, compressOps, invertOps, prevOf } from './ops';
+import { Op, EntColl, EntMap, applyOps, compressOps, invertOps, prevOf } from './ops';
 import { Clip } from './clipboard';
+import { OBJECT_BY_ID } from './objects';
 import { makeId, Rng } from '../util/rng';
 import { systemName } from '../generation/names';
 import { makeStarCluster } from './stars';
@@ -26,9 +33,19 @@ export type Tool =
   | 'add-system'
   | 'connect'
   | 'paint'
-  | 'delete';
+  | 'delete'
+  | 'nebula'
+  | 'region'
+  | 'object'
+  | 'annotate';
 
 export type SelectMode = 'replace' | 'toggle' | 'add';
+
+/** A selected non-system entity (these are edited one at a time). */
+export interface EntityRef {
+  c: EntColl;
+  id: ID;
+}
 
 export interface EditorState {
   map: GalaxyMap;
@@ -42,18 +59,40 @@ export interface EditorState {
   tool: Tool;
   /** ids of every selected system */
   selection: ID[];
+  /** the selected nebula / region / object / annotation, if any */
+  selectedEntity: EntityRef | null;
   activeEmpireId: ID | null;
   /** first endpoint captured by the "connect" tool */
   connectFromId: ID | null;
+
+  // --- tool options (editor state, not part of the map) ---
+  activeNebulaId: ID | null;
+  brushSize: number;
+  objectKind: ObjectKind;
+  annotationKind: AnnotationKind;
+  annotationColor: string;
+  /** object being linked by the "link objects" action */
+  linkFromId: ID | null;
 
   // --- selection / tools ---
   setTool: (t: Tool) => void;
   selectSystem: (id: ID | null, mode?: SelectMode) => void;
   setSelection: (ids: ID[]) => void;
+  selectEntity: (ref: EntityRef | null) => void;
   selectAll: () => void;
   clearSelection: () => void;
   setActiveEmpire: (id: ID | null) => void;
   setConnectFrom: (id: ID | null) => void;
+  setToolOptions: (
+    o: Partial<{
+      activeNebulaId: ID | null;
+      brushSize: number;
+      objectKind: ObjectKind;
+      annotationKind: AnnotationKind;
+      annotationColor: string;
+      linkFromId: ID | null;
+    }>
+  ) => void;
 
   // --- history ---
   /** Group everything until `endTx` into a single undo step (e.g. one drag). */
@@ -90,9 +129,31 @@ export interface EditorState {
   updateEmpire: (id: ID, patch: Partial<Empire>) => void;
   removeEmpire: (id: ID) => void;
 
+  // --- nebulae / regions / objects / annotations ---
+  updateEnt: <C extends EntColl>(
+    c: C,
+    id: ID,
+    patch: Partial<EntMap[C]>
+  ) => void;
+  removeEnt: (c: EntColl, id: ID) => void;
+  addNebula: (opts?: Partial<Nebula>) => ID;
+  /** Add brush dabs to a nebula (painting). */
+  paintNebula: (id: ID, blobs: { x: number; y: number; r: number }[]) => void;
+  /** Remove dabs overlapping the brush (erasing). */
+  eraseNebula: (id: ID, x: number, y: number, r: number) => void;
+  addRegion: (x: number, y: number, opts?: Partial<MapRegion>) => ID;
+  addObject: (x: number, y: number, opts?: Partial<SpaceObject>) => ID;
+  linkObjects: (a: ID, b: ID) => void;
+  addAnnotation: (a: Omit<Annotation, 'id'>) => ID;
+
   // --- display ---
   setDisplay: (patch: Partial<DisplaySettings>) => void;
 }
+
+const NEBULA_PALETTE = [
+  '#7a4bd6', '#c2416b', '#2f8fb8', '#b8632f', '#3fa06a',
+  '#8f3fa0', '#3f5fa0', '#a0863f',
+];
 
 const EMPIRE_PALETTE = [
   '#e0483d', '#3d8ee0', '#49c26b', '#e0b23d', '#a34fe0',
@@ -170,28 +231,39 @@ export const useEditor = create<EditorState>((set, get) => {
 
     tool: 'select',
     selection: [],
+    selectedEntity: null,
     activeEmpireId: null,
     connectFromId: null,
 
-    setTool: (t) => set({ tool: t, connectFromId: null }),
+    activeNebulaId: null,
+    brushSize: 60,
+    objectKind: 'wormhole',
+    annotationKind: 'text',
+    annotationColor: '#e2eaf8',
+    linkFromId: null,
+
+    setTool: (t) => set({ tool: t, connectFromId: null, linkFromId: null }),
 
     selectSystem: (id, mode = 'replace') =>
       set((s) => {
-        if (id === null) return { selection: [] };
-        if (mode === 'replace') return { selection: [id] };
+        if (id === null) return { selection: [], selectedEntity: null };
+        if (mode === 'replace') return { selection: [id], selectedEntity: null };
         const has = s.selection.includes(id);
-        if (mode === 'add') return has ? {} : { selection: [...s.selection, id] };
+        if (mode === 'add')
+          return has ? {} : { selection: [...s.selection, id], selectedEntity: null };
         return has
           ? { selection: s.selection.filter((x) => x !== id) }
-          : { selection: [...s.selection, id] };
+          : { selection: [...s.selection, id], selectedEntity: null };
       }),
 
-    setSelection: (ids) => set({ selection: ids }),
+    setSelection: (ids) => set({ selection: ids, selectedEntity: null }),
+    selectEntity: (ref) => set({ selectedEntity: ref, selection: [] }),
     selectAll: () => set((s) => ({ selection: Object.keys(s.map.systems) })),
-    clearSelection: () => set({ selection: [] }),
+    clearSelection: () => set({ selection: [], selectedEntity: null }),
 
     setActiveEmpire: (id) => set({ activeEmpireId: id }),
     setConnectFrom: (id) => set({ connectFromId: id }),
+    setToolOptions: (o) => set(o),
 
     beginTx: () => {
       if (!txOps) txOps = [];
@@ -429,6 +501,163 @@ export const useEditor = create<EditorState>((set, get) => {
     setDisplay: (patch) => {
       const cur = resolveDisplay(get().map.display);
       commit([{ t: 'disp.set', patch, prev: prevOf(cur, patch) }]);
+    },
+
+    updateEnt: (c, id, patch) => {
+      const cur = get().map[c][id] as EntMap[typeof c] | undefined;
+      if (!cur) return;
+      commit([{ t: 'ent.set', c, id, patch, prev: prevOf(cur, patch) } as Op]);
+    },
+
+    removeEnt: (c, id) => {
+      const ent = get().map[c][id];
+      if (!ent) return;
+      const ops: Op[] = [{ t: 'ent.del', c, ent } as Op];
+      // Unlink anything pointing at a deleted object.
+      if (c === 'objects') {
+        for (const o of Object.values(get().map.objects)) {
+          if (o.linkedId === id) {
+            ops.push({
+              t: 'ent.set',
+              c: 'objects',
+              id: o.id,
+              patch: { linkedId: null },
+              prev: { linkedId: id },
+            });
+          }
+        }
+      }
+      commit(ops);
+      set((s) => ({
+        selectedEntity:
+          s.selectedEntity?.c === c && s.selectedEntity.id === id
+            ? null
+            : s.selectedEntity,
+        activeNebulaId: c === 'nebulae' && s.activeNebulaId === id ? null : s.activeNebulaId,
+      }));
+    },
+
+    addNebula: (opts) => {
+      const id = makeId('neb');
+      const n = Object.keys(get().map.nebulae).length;
+      const neb: Nebula = {
+        id,
+        name: opts?.name ?? `Nebula ${n + 1}`,
+        color: opts?.color ?? NEBULA_PALETTE[n % NEBULA_PALETTE.length],
+        opacity: opts?.opacity ?? 0.5,
+        blobs: opts?.blobs ?? [],
+        showName: opts?.showName ?? true,
+      };
+      commit([{ t: 'ent.add', c: 'nebulae', ent: neb }]);
+      set({ activeNebulaId: id });
+      return id;
+    },
+
+    paintNebula: (id, blobs) => {
+      const cur = get().map.nebulae[id];
+      if (!cur || blobs.length === 0) return;
+      commit([
+        {
+          t: 'ent.set',
+          c: 'nebulae',
+          id,
+          patch: { blobs: [...cur.blobs, ...blobs] },
+          prev: { blobs: cur.blobs },
+        },
+      ]);
+    },
+
+    eraseNebula: (id, x, y, r) => {
+      const cur = get().map.nebulae[id];
+      if (!cur) return;
+      const kept = cur.blobs.filter((b) => Math.hypot(b.x - x, b.y - y) > r);
+      if (kept.length === cur.blobs.length) return;
+      commit([
+        {
+          t: 'ent.set',
+          c: 'nebulae',
+          id,
+          patch: { blobs: kept },
+          prev: { blobs: cur.blobs },
+        },
+      ]);
+    },
+
+    addRegion: (x, y, opts) => {
+      const id = makeId('reg');
+      const reg: MapRegion = {
+        id,
+        name: opts?.name ?? 'New Region',
+        x,
+        y,
+        size: opts?.size ?? 70,
+        color: opts?.color,
+        spacing: opts?.spacing ?? 0.35,
+      };
+      commit([{ t: 'ent.add', c: 'regions', ent: reg }]);
+      set({ selectedEntity: { c: 'regions', id }, selection: [] });
+      return id;
+    },
+
+    addObject: (x, y, opts) => {
+      const id = makeId('obj');
+      const kind = opts?.kind ?? get().objectKind;
+      const obj: SpaceObject = {
+        id,
+        kind,
+        name: opts?.name ?? OBJECT_BY_ID[kind].label,
+        x,
+        y,
+        systemId: opts?.systemId ?? null,
+        linkedId: opts?.linkedId ?? null,
+        color: opts?.color,
+      };
+      commit([{ t: 'ent.add', c: 'objects', ent: obj }]);
+      set({ selectedEntity: { c: 'objects', id }, selection: [] });
+      return id;
+    },
+
+    linkObjects: (a, b) => {
+      const map = get().map;
+      const oa = map.objects[a];
+      const ob = map.objects[b];
+      if (!oa || !ob || a === b) return;
+      const ops: Op[] = [
+        {
+          t: 'ent.set',
+          c: 'objects',
+          id: a,
+          patch: { linkedId: b },
+          prev: { linkedId: oa.linkedId ?? null },
+        },
+        {
+          t: 'ent.set',
+          c: 'objects',
+          id: b,
+          patch: { linkedId: a },
+          prev: { linkedId: ob.linkedId ?? null },
+        },
+      ];
+      // Break whatever those two were linked to before, so links stay pairwise.
+      for (const old of [oa.linkedId, ob.linkedId]) {
+        if (old && old !== a && old !== b && map.objects[old]) {
+          ops.push({
+            t: 'ent.set',
+            c: 'objects',
+            id: old,
+            patch: { linkedId: null },
+            prev: { linkedId: map.objects[old].linkedId ?? null },
+          });
+        }
+      }
+      commit(ops);
+    },
+
+    addAnnotation: (a) => {
+      const id = makeId('ann');
+      commit([{ t: 'ent.add', c: 'annotations', ent: { ...a, id } }]);
+      set({ selectedEntity: { c: 'annotations', id }, selection: [] });
+      return id;
     },
   };
 });

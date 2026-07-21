@@ -1,5 +1,37 @@
-import { GalaxyMap, System, Hyperlane, Empire, ID } from './types';
+import {
+  GalaxyMap,
+  System,
+  Hyperlane,
+  Empire,
+  ID,
+  Nebula,
+  MapRegion,
+  SpaceObject,
+  Annotation,
+} from './types';
 import { DisplaySettings, resolveDisplay } from './display';
+
+/** Map collections that hold a plain id-keyed entity, edited through `ent.*`. */
+export type EntColl = 'nebulae' | 'regions' | 'objects' | 'annotations';
+
+export interface EntMap {
+  nebulae: Nebula;
+  regions: MapRegion;
+  objects: SpaceObject;
+  annotations: Annotation;
+}
+
+type EntAdd = { [C in EntColl]: { t: 'ent.add'; c: C; ent: EntMap[C] } }[EntColl];
+type EntDel = { [C in EntColl]: { t: 'ent.del'; c: C; ent: EntMap[C] } }[EntColl];
+type EntSet = {
+  [C in EntColl]: {
+    t: 'ent.set';
+    c: C;
+    id: ID;
+    patch: Partial<EntMap[C]>;
+    prev: Partial<EntMap[C]>;
+  };
+}[EntColl];
 
 /**
  * Every edit to the map is expressed as one of these operations. Two properties
@@ -30,6 +62,9 @@ export type Op =
       patch: Partial<DisplaySettings>;
       prev: Partial<DisplaySettings>;
     }
+  | EntAdd
+  | EntDel
+  | EntSet
   /** whole-document replacement (generate / import) */
   | { t: 'map.set'; map: GalaxyMap; prev: GalaxyMap };
 
@@ -74,6 +109,21 @@ export function applyOp(map: GalaxyMap, op: Op): GalaxyMap {
     }
     case 'disp.set':
       return { ...map, display: { ...resolveDisplay(map.display), ...op.patch } };
+    case 'ent.add':
+      return { ...map, [op.c]: { ...map[op.c], [op.ent.id]: op.ent } };
+    case 'ent.del': {
+      const coll = { ...map[op.c] } as Record<ID, unknown>;
+      delete coll[op.ent.id];
+      return { ...map, [op.c]: coll };
+    }
+    case 'ent.set': {
+      const cur = (map[op.c] as Record<ID, object>)[op.id];
+      if (!cur) return map;
+      return {
+        ...map,
+        [op.c]: { ...map[op.c], [op.id]: { ...cur, ...op.patch } },
+      };
+    }
     case 'map.set':
       return op.map;
   }
@@ -105,6 +155,18 @@ export function invertOp(op: Op): Op {
       return { t: 'emp.set', id: op.id, patch: op.prev, prev: op.patch };
     case 'disp.set':
       return { t: 'disp.set', patch: op.prev, prev: op.patch };
+    case 'ent.add':
+      return { t: 'ent.del', c: op.c, ent: op.ent } as Op;
+    case 'ent.del':
+      return { t: 'ent.add', c: op.c, ent: op.ent } as Op;
+    case 'ent.set':
+      return {
+        t: 'ent.set',
+        c: op.c,
+        id: op.id,
+        patch: op.prev,
+        prev: op.patch,
+      } as Op;
     case 'map.set':
       return { t: 'map.set', map: op.prev, prev: op.map };
   }
@@ -152,6 +214,22 @@ export function compressOps(ops: readonly Op[]): Op[] {
         patch: { ...last.patch, ...op.patch },
         prev: { ...op.prev, ...last.prev },
       };
+      continue;
+    }
+    if (
+      last &&
+      op.t === 'ent.set' &&
+      last.t === 'ent.set' &&
+      last.c === op.c &&
+      last.id === op.id
+    ) {
+      out[out.length - 1] = {
+        t: 'ent.set',
+        c: op.c,
+        id: op.id,
+        patch: { ...last.patch, ...op.patch },
+        prev: { ...op.prev, ...last.prev },
+      } as Op;
       continue;
     }
     if (last && op.t === 'disp.set' && last.t === 'disp.set') {

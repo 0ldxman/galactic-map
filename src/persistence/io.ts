@@ -2,6 +2,23 @@ import { GalaxyMap, MAP_VERSION } from '../model/types';
 
 const STORAGE_KEY = 'galactic-map:autosave';
 
+/**
+ * Bring an older map up to the current format. v1 had no nebulae, regions,
+ * objects or annotations; everything added since is optional or defaulted, so
+ * the migration is just filling in the empty collections.
+ */
+export function migrate(map: GalaxyMap): GalaxyMap {
+  if (map.version >= MAP_VERSION && map.nebulae && map.annotations) return map;
+  return {
+    ...map,
+    version: MAP_VERSION,
+    nebulae: map.nebulae ?? {},
+    regions: map.regions ?? {},
+    objects: map.objects ?? {},
+    annotations: map.annotations ?? {},
+  };
+}
+
 export function isGalaxyMap(v: unknown): v is GalaxyMap {
   if (!v || typeof v !== 'object') return false;
   const m = v as Record<string, unknown>;
@@ -58,7 +75,7 @@ export function importFromFile(file: File): Promise<GalaxyMap> {
           reject(new Error(`Unsupported map version ${parsed.version}.`));
           return;
         }
-        resolve(parsed);
+        resolve(migrate(parsed));
       } catch (e) {
         reject(e instanceof Error ? e : new Error('Failed to parse file.'));
       }
@@ -81,7 +98,7 @@ export function loadAutosave(): GalaxyMap | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return isGalaxyMap(parsed) ? parsed : null;
+    return isGalaxyMap(parsed) ? migrate(parsed) : null;
   } catch {
     return null;
   }

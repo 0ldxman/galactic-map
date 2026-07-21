@@ -37,23 +37,31 @@ are recorded here so they don't have to be re-litigated.
 
 Pan moved to right- or middle-drag; left-drag on empty space is now box select.
 
-## Phase B — map content
+## Phase B — map content ✅
 
-- Map model v2 + migration (one version bump for all the new entities below).
-- **System ownership status** — core / claimed / occupied / contested /
-  demilitarized, drawn with hatch patterns. Borders get traced per
-  *(empire, status)* key instead of per empire; same grid, same tracer.
-- **Nebulae** — painted as a set of circles (`blobs`), rendered with the same
-  metaball technique as territories, cached as a world-space texture.
-- **Named regions / sectors** — sparse wide labels, Stellaris cluster style.
-  Optional dashed outline later.
-- **Special objects** — a separate entity from markers, because they have
-  geometry and links: `SpaceObject { kind, x, y, systemId?, linkedId? }`.
-  Paired wormholes/gates draw a dashed arc between the two ends. Icons drawn
-  vectorially so they stay crisp in 8K exports.
+- Map model **v2** + migration (one version bump for every new entity), with
+  `System.bodies` reserved for Phase E so the format isn't bumped twice.
+- **System hold status** — core / claimed / occupied / contested /
+  demilitarized, drawn with hatch patterns held at a constant screen size.
+  Ownership is still solved across all systems first, so borders stay on the
+  midpoint between rivals; only inside an empire that actually mixes statuses
+  is the field rerun per status subgroup.
+- **Nebulae** — painted as brush dabs (`blobs`), melted together and baked into
+  a world-space texture, so panning costs one `drawImage`.
+- **Named regions / sectors** — sparse wide labels, sized in world units.
+- **Special objects** — `SpaceObject { kind, x, y, systemId?, linkedId? }`,
+  a separate entity from markers because they have geometry and links. Paired
+  wormholes/gates draw a bowed dashed arc. Icons are vector-drawn so they stay
+  crisp at any zoom and in a large export.
   (Markers stay "a tag on a system"; objects are "a thing on the map".)
-- **Free annotations** — text, arrows, lines, polygons, ellipses with handles.
-- **Lore in markdown** on systems, empires, objects and regions.
+- **Free annotations** — text, arrows, lines, polygons, ellipses, with vertex
+  handles, an above/below-territories layer choice and dashed/filled options.
+- **Lore in markdown** (marked + DOMPurify) on systems, empires, nebulae,
+  regions and objects.
+
+Also done here: render caches are now invalidated by **collection reference**
+rather than a global revision counter, so painting a nebula no longer rebuilds
+the borders and moving a system no longer rebakes the nebula texture.
 
 ## Phase C — export
 

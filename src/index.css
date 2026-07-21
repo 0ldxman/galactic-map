@@ -239,6 +239,57 @@ html, body, #root {
   background: #171a2c;
 }
 
+/* Notes / markdown */
+.notes-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.notes-head > span { color: var(--muted); font-size: 11px; }
+.notes-head .seg { flex: 0 0 auto; }
+.notes-head .seg-btn { padding: 2px 8px; font-size: 11px; }
+.notes-input {
+  background: #0f1120;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 6px 7px;
+  font-family: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+.notes-view {
+  background: #0f1120;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.notes-view > :first-child { margin-top: 0; }
+.notes-view > :last-child { margin-bottom: 0; }
+.notes-view h1, .notes-view h2, .notes-view h3 {
+  font-size: 13px; margin: 8px 0 4px; color: #eef2ff;
+}
+.notes-view p { margin: 6px 0; }
+.notes-view ul, .notes-view ol { margin: 6px 0; padding-left: 18px; }
+.notes-view code {
+  background: #1a1d30; padding: 1px 4px; border-radius: 3px; font-size: 11px;
+}
+.notes-view pre { background: #1a1d30; padding: 6px; border-radius: 5px; overflow-x: auto; }
+.notes-view a { color: #8fb0ff; }
+.notes-view blockquote {
+  margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--border); color: var(--muted);
+}
+.notes-view img { max-width: 100%; }
+
+/* Object link row */
+.link-row { display: flex; align-items: center; gap: 6px; }
+.link-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Display panel */
 .toggle-grid {
   display: grid;
