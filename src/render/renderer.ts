@@ -397,8 +397,8 @@ function clamp(v: number, lo: number, hi: number) {
 interface StarDot { x: number; y: number; r: number; type: StarType }
 
 // Base star radii in WORLD units (main-sequence). Multiplied by zoom on screen.
-const STAR_WORLD_R = 4.6;
-const CAPITAL_WORLD_R = 6.2;
+const STAR_WORLD_R = 1.85;
+const CAPITAL_WORLD_R = 2.5;
 // Never let a star vanish completely when zoomed far out.
 const STAR_MIN_PX = 0.55;
 // Glow: halo radius as a multiple of the core radius; skip tiny far-out stars.
