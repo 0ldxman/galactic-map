@@ -131,6 +131,46 @@ The sidebar had grown into one endless column mixing server administration with
 - The panel is resizable (240–520 px, remembered) and collapses with `Tab`;
   `F` frames the selection.
 
+## Phase G — the second pass ✅
+
+Everything here came from using the thing rather than from the plan.
+
+- **Unclaimed systems hold their space.** They now project influence like
+  anyone else, so a neighbour's border stops at the midpoint instead of
+  flowing over an independent system — but nothing is drawn for them, so it
+  reads as an empire politely stopping short. Toggle in Map ▸ Borders.
+- **Nebulae are gas, not airbrush.** The painted dabs became a *mask*; what
+  fills it is two tileable fBm fields (one clumpy, one ridged) multiplied
+  together, which is where the filaments and dark lanes come from. Per cloud:
+  texture, filament size, a reroll; globally: texture, brightness, and the
+  resolution the gas is baked at.
+- **Regions grew a boundary.** `MapRegion.shape` is an optional polygon: drag
+  a loop with the Region tool and you get a real sector — outline, wash,
+  system count, and a legend entry. Regions without a shape are still the
+  plain wide label they always were, so nothing on an old map changed.
+- **Object links finished.** Only passages (wormhole · gateway · L-Gate) can
+  be linked, only to their own kind, from a dropdown or by clicking the far
+  end on the map. The outliner shows what each end joins to.
+- **Nebulae can be got rid of.** Delete on the row in the outliner, a Delete
+  button on the brush strip, an explicit Paint/Erase toggle, and a plain click
+  picks up the cloud under the cursor — gas has no outline to aim at.
+- **Gate markers** — the single `gate` marker became wormhole · gateway ·
+  L-Gate, drawn with the same vector icons the objects use. The old id still
+  resolves so existing maps keep their badges.
+- **Lasso select** next to box select, and Alt-drag for it either way.
+- **Empire border colour** unfolds under the active empire in the outliner.
+- **Invite codes moved into their own window.** They are credentials; they
+  shouldn't sit open on the dashboard.
+- **The viewer's card** dropped the star list (it told a reader nothing) and
+  gained the owner's colour, the sector, and the objects in the system.
+- **Phones.** Pinch to zoom and one-finger pan everywhere, taps decided on
+  release so panning doesn't select what it crosses, wider hit targets for
+  fingers, the viewer's card as a bottom sheet, the editor's panel as an
+  overlay drawer with the tools on a scrolling strip.
+
+Fixed on the way through: the rubber-band rectangle was never updated during
+the drag, so box select had always measured 0×0 and selected nothing.
+
 ## Phase E — later
 
 - **Planets** — `System.bodies: Planet[]`, shown in a separate System View

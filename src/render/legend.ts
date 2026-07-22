@@ -13,7 +13,7 @@ export interface WorldRect {
   maxY: number;
 }
 
-type EntryKind = 'empire' | 'status' | 'object' | 'marker' | 'nebula';
+type EntryKind = 'empire' | 'status' | 'object' | 'marker' | 'nebula' | 'region';
 
 export interface LegendEntry {
   kind: EntryKind;
@@ -49,6 +49,7 @@ export function collectLegend(
   const objects = new Set<string>();
   const markers = new Set<string>();
   const nebulae: LegendEntry[] = [];
+  const regions: LegendEntry[] = [];
 
   for (const s of Object.values(map.systems)) {
     if (!inside(rect, s.x, s.y)) continue;
@@ -78,6 +79,17 @@ export function collectLegend(
     for (const n of Object.values(map.nebulae)) {
       if (n.blobs.some((b) => inside(rect, b.x, b.y))) {
         nebulae.push({ kind: 'nebula', label: n.name, color: n.color });
+      }
+    }
+  }
+
+  // Only outlined sectors go in: a bare label already reads as its own name
+  // on the map and would just repeat itself here.
+  if (dsp.showRegions) {
+    for (const r of Object.values(map.regions)) {
+      if (!r.shape || r.shape.length < 3) continue;
+      if (r.shape.some((p) => inside(rect, p.x, p.y))) {
+        regions.push({ kind: 'region', label: r.name, color: r.color ?? '#c9d6f2' });
       }
     }
   }
@@ -122,6 +134,7 @@ export function collectLegend(
       })),
     });
   }
+  if (regions.length) groups.push({ title: 'Sectors', entries: regions });
   if (nebulae.length) groups.push({ title: 'Nebulae', entries: nebulae });
   return groups;
 }
@@ -269,6 +282,19 @@ function drawSwatch(
     case 'object':
       drawObjectIcon(ctx, e.key as never, cx + half, cy, half - 1, e.color);
       break;
+    case 'region': {
+      const [r, g, b] = hexToRgb(e.color);
+      ctx.fillStyle = `rgba(${r},${g},${b},0.12)`;
+      ctx.strokeStyle = e.color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.roundRect(cx + 1, cy - half + 2, SWATCH - 2, SWATCH - 4, 3);
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      break;
+    }
     case 'marker': {
       const mk = MARKER_BY_ID[e.key!];
       ctx.fillStyle = 'rgba(8,11,22,0.92)';
@@ -278,11 +304,16 @@ function drawSwatch(
       ctx.strokeStyle = e.color;
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.fillStyle = e.color;
-      ctx.font = '11px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(mk?.glyph ?? '?', cx + half, cy + 0.5);
-      ctx.textAlign = 'left';
+      // Match what the map drew for this marker — vector icon or glyph.
+      if (mk?.icon) {
+        drawObjectIcon(ctx, mk.icon, cx + half, cy, half * 0.68, e.color);
+      } else {
+        ctx.fillStyle = e.color;
+        ctx.font = '11px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(mk?.glyph ?? '?', cx + half, cy + 0.5);
+        ctx.textAlign = 'left';
+      }
       break;
     }
   }

@@ -1,14 +1,17 @@
 import { useEffect, useRef } from 'react';
 import { useEditor, EntityRef } from '../model/store';
-import { Annotation, ID } from '../model/types';
+import { Annotation, ID, Point } from '../model/types';
 import { liveCamera } from '../render/camera';
 import { Renderer, Marquee } from '../render/renderer';
 import { makeClip, parseClip, Clip } from '../model/clipboard';
 import { useSync, sendCursor } from '../net/sync';
+import { pointInPolygon, polygonCentroid, polygonBounds, thinPath } from '../util/geom';
 
 const HIT_RADIUS = 11; // screen px
 const LINE_HIT = 7; // screen px for hyperlane picking
 const HANDLE_HIT = 7; // screen px for annotation vertex handles
+/** Fingers are blunter than a mouse pointer; widen every pick for touch. */
+const TOUCH_HIT_SCALE = 2.2;
 
 /** Distance from point (px,py) to the segment (ax,ay)-(bx,by), in screen px. */
 function distToSegment(
@@ -24,16 +27,34 @@ function distToSegment(
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
+/** True when (sx,sy) is within a few screen px of a closed world-space ring. */
+function nearRing(
+  sx: number,
+  sy: number,
+  ring: readonly Point[],
+  cam: { worldToScreen: (x: number, y: number) => Point }
+): boolean {
+  const n = ring.length;
+  for (let i = 0; i < n; i++) {
+    const a = cam.worldToScreen(ring[i].x, ring[i].y);
+    const b = cam.worldToScreen(ring[(i + 1) % n].x, ring[(i + 1) % n].y);
+    if (distToSegment(sx, sy, a.x, a.y, b.x, b.y) <= 7) return true;
+  }
+  return false;
+}
+
 interface DragState {
   mode:
     | 'none'
     | 'pan'
     | 'move'
     | 'marquee'
+    | 'lasso'
     | 'ent-move'
     | 'ent-vertex'
     | 'draw'
-    | 'brush';
+    | 'brush'
+    | 'region';
   /** world position of the pointer when a move-drag started */
   originX: number;
   originY: number;
@@ -48,13 +69,15 @@ interface DragState {
    * click and the selection collapses to this one system on release.
    */
   collapseTo: string | null;
-  /** entity being dragged, and which of its vertices (annotations only) */
+  /** entity being dragged, and which of its vertices (annotations/regions) */
   ent: EntityRef | null;
   vertex: number;
   /** world position of the last painted nebula dab */
   dabX: number;
   dabY: number;
   erasing: boolean;
+  /** true when this gesture came from a finger rather than a mouse */
+  touch: boolean;
 }
 
 /** Last clipboard payload, used when the OS clipboard is unavailable. */
@@ -66,9 +89,15 @@ export function MapCanvas() {
   const rendererRef = useRef(new Renderer());
   const dirtyRef = useRef(true);
   const marqueeRef = useRef<Marquee | null>(null);
+  const lassoRef = useRef<Point[] | null>(null);
+  const regionDraftRef = useRef<Point[] | null>(null);
   const draftRef = useRef<Annotation | null>(null);
   const cursorRef = useRef({ x: 0, y: 0, inside: false });
   const lastCursorSent = useRef(0);
+  // Live touch points, for pinch-zoom. A mouse only ever puts one in here.
+  const pointersRef = useRef(new Map<number, Point>());
+  const pinchRef = useRef<{ d: number; x: number; y: number } | null>(null);
+  const pinchedRef = useRef(false);
   const dragRef = useRef<DragState>({
     mode: 'none',
     originX: 0,
@@ -83,6 +112,7 @@ export function MapCanvas() {
     dabX: 0,
     dabY: 0,
     erasing: false,
+    touch: false,
   });
   const didFit = useRef(false);
 
@@ -118,6 +148,10 @@ export function MapCanvas() {
     };
     resize();
     window.addEventListener('resize', resize);
+    // A phone rotating, or a mobile browser's URL bar sliding away, changes the
+    // canvas box without firing `resize` reliably — watch the element itself.
+    const ro = new ResizeObserver(resize);
+    ro.observe(canvas);
 
     const loop = () => {
       const st = useEditor.getState();
@@ -166,6 +200,8 @@ export function MapCanvas() {
           // every frame is what makes dragging lag); they snap back on release.
           deferTerritory: dragRef.current.mode === 'move',
           marquee: marqueeRef.current,
+          lasso: lassoRef.current,
+          draftRegion: regionDraftRef.current,
           draftAnnotation: draftRef.current,
           // Only editors have pointers worth showing, and a viewer sees the
           // map alone — no one else's cursor either.
@@ -175,7 +211,7 @@ export function MapCanvas() {
                 (p) => p.canEdit && p.id !== useSync.getState().selfId
               ),
           brush:
-            st.tool === 'nebula' && c.inside
+            st.tool === 'nebula' && c.inside && !st.readOnly
               ? { x: c.x, y: c.y, r: st.brushSize * cam.zoom }
               : null,
         });
@@ -191,6 +227,7 @@ export function MapCanvas() {
 
     return () => {
       cancelAnimationFrame(raf);
+      ro.disconnect();
       window.removeEventListener('resize', resize);
     };
   }, []);
@@ -220,7 +257,7 @@ export function MapCanvas() {
 
     const onKey = (e: KeyboardEvent) => {
       if (editable(e.target)) return;
-      // Finish a polygon that is being clicked out.
+      // Finish a polygon or a region outline that is being clicked out.
       if (!e.ctrlKey && !e.metaKey && draftRef.current) {
         if (e.key === 'Enter' || e.key === 'Escape') {
           e.preventDefault();
@@ -277,11 +314,11 @@ export function MapCanvas() {
 
   // ---- hit testing ---------------------------------------------------------
 
-  const hitTest = (sx: number, sy: number): string | null => {
+  const hitTest = (sx: number, sy: number, scale = 1): string | null => {
     const cam = camRef.current;
     const { map } = useEditor.getState();
     let best: string | null = null;
-    let bestD = HIT_RADIUS;
+    let bestD = HIT_RADIUS * scale;
     for (const s of Object.values(map.systems)) {
       const p = cam.worldToScreen(s.x, s.y);
       const d = Math.hypot(p.x - sx, p.y - sy);
@@ -313,10 +350,10 @@ export function MapCanvas() {
     return best;
   };
 
-  const hitTestObject = (sx: number, sy: number): ID | null => {
+  const hitTestObject = (sx: number, sy: number, scale = 1): ID | null => {
     const cam = camRef.current;
     const { map } = useEditor.getState();
-    const r = Math.max(9, Math.min(22, 7 * Math.sqrt(cam.zoom)) * 1.6);
+    const r = Math.max(9, Math.min(22, 7 * Math.sqrt(cam.zoom)) * 1.6) * scale;
     for (const o of Object.values(map.objects)) {
       const p = cam.worldToScreen(o.x, o.y);
       if (Math.hypot(p.x - sx, p.y - sy) <= r) return o.id;
@@ -324,20 +361,72 @@ export function MapCanvas() {
     return null;
   };
 
-  const hitTestRegion = (sx: number, sy: number): ID | null => {
+  /**
+   * Regions come in two shapes: an outlined area (hit anywhere inside it, and
+   * on its vertex handles when selected) or a bare label (hit on the text).
+   */
+  const hitTestRegion = (
+    sx: number,
+    sy: number,
+    selectedId: ID | null,
+    /** count anywhere inside the boundary as a hit, not just the edge */
+    interior = false
+  ): { id: ID; vertex: number } | null => {
     const cam = camRef.current;
     const { map } = useEditor.getState();
-    for (const rg of Object.values(map.regions)) {
-      const fontPx = rg.size * cam.zoom;
+
+    if (selectedId) {
+      const r = map.regions[selectedId];
+      if (r?.shape) {
+        for (let i = 0; i < r.shape.length; i++) {
+          const p = cam.worldToScreen(r.shape[i].x, r.shape[i].y);
+          if (Math.hypot(p.x - sx, p.y - sy) <= HANDLE_HIT) {
+            return { id: r.id, vertex: i };
+          }
+        }
+      }
+    }
+
+    const w = cam.screenToWorld(sx, sy);
+    let bestArea = Infinity;
+    let best: string | null = null;
+    for (const r of Object.values(map.regions)) {
+      if (r.shape && r.shape.length >= 3) {
+        // A sector can cover half the map, so its interior is only a target
+        // once it is the selected one — otherwise dragging a selection box
+        // across a sector would grab the sector instead. Before that, aim at
+        // the boundary line itself (or at the name).
+        const onEdge = nearRing(sx, sy, r.shape, cam);
+        const inside =
+          (interior || selectedId === r.id) &&
+          pointInPolygon(w.x, w.y, r.shape);
+        if (!onEdge && !inside) continue;
+        // A region inside another region wins — you meant the smaller one.
+        const b = polygonBounds(r.shape);
+        const area = (b.maxX - b.minX) * (b.maxY - b.minY);
+        if (area < bestArea) { bestArea = area; best = r.id; }
+        continue;
+      }
+      const fontPx = r.size * cam.zoom;
       if (fontPx < 4) continue;
-      const p = cam.worldToScreen(rg.x, rg.y);
+      const p = cam.worldToScreen(r.x, r.y);
       // Rough text box: the exact metrics aren't worth a measureText here.
-      const halfW = (rg.name.length * fontPx * (0.55 + (rg.spacing ?? 0.35))) / 2;
-      if (
-        Math.abs(sx - p.x) <= halfW + 4 &&
-        Math.abs(sy - p.y) <= fontPx * 0.75
-      ) {
-        return rg.id;
+      const halfW = (r.name.length * fontPx * (0.55 + (r.spacing ?? 0.35))) / 2;
+      if (Math.abs(sx - p.x) <= halfW + 4 && Math.abs(sy - p.y) <= fontPx * 0.75) {
+        return { id: r.id, vertex: -1 };
+      }
+    }
+    return best ? { id: best, vertex: -1 } : null;
+  };
+
+  /** The nebula whose gas covers this point, if any. */
+  const hitTestNebula = (sx: number, sy: number): ID | null => {
+    const cam = camRef.current;
+    const { map } = useEditor.getState();
+    const w = cam.screenToWorld(sx, sy);
+    for (const n of Object.values(map.nebulae)) {
+      for (const b of n.blobs) {
+        if (Math.hypot(b.x - w.x, b.y - w.y) <= b.r) return n.id;
       }
     }
     return null;
@@ -411,17 +500,58 @@ export function MapCanvas() {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  // ---- pinch to zoom -------------------------------------------------------
+
+  /** Abandon whatever gesture was in progress (a second finger landed). */
+  const cancelGesture = () => {
+    const drag = dragRef.current;
+    if (drag.tx) {
+      useEditor.getState().endTx();
+      drag.tx = false;
+    }
+    drag.mode = 'none';
+    drag.ent = null;
+    drag.collapseTo = null;
+    marqueeRef.current = null;
+    lassoRef.current = null;
+    regionDraftRef.current = null;
+    dirtyRef.current = true;
+  };
+
+  const pinchState = () => {
+    const [a, b] = [...pointersRef.current.values()];
+    if (!a || !b) return null;
+    return {
+      d: Math.hypot(a.x - b.x, a.y - b.y),
+      x: (a.x + b.x) / 2,
+      y: (a.y + b.y) / 2,
+    };
+  };
+
   // ---- pointer handling ----------------------------------------------------
 
   const onPointerDown = (e: React.PointerEvent) => {
     (e.target as Element).setPointerCapture(e.pointerId);
     const { x, y } = localPos(e);
+    pointersRef.current.set(e.pointerId, { x, y });
+
+    // Two fingers = pinch/pan, whatever tool is selected. Whatever the first
+    // finger had begun is rolled back so a zoom never paints or drags.
+    if (pointersRef.current.size >= 2) {
+      cancelGesture();
+      pinchedRef.current = true;
+      pinchRef.current = pinchState();
+      return;
+    }
+
     const state = useEditor.getState();
     const cam = camRef.current;
     const drag = dragRef.current;
     drag.lastX = x;
     drag.lastY = y;
     drag.moved = false;
+    drag.touch = e.pointerType === 'touch';
+    const scale = drag.touch ? TOUCH_HIT_SCALE : 1;
     const w = cam.screenToWorld(x, y);
 
     // Middle or right button always pans, whatever the active tool.
@@ -433,17 +563,9 @@ export function MapCanvas() {
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
 
     // Read-only (a published map opened by a guest): the map is all there is.
-    // Left-drag pans, a click looks something up. No tools, no box select.
+    // Left-drag pans; what a tap picked is decided on release, so panning
+    // across the galaxy doesn't open a card for every star it crosses.
     if (state.readOnly) {
-      const obj = hitTestObject(x, y);
-      const sys = obj ? null : hitTest(x, y);
-      if (obj) state.selectEntity({ c: 'objects', id: obj });
-      else if (sys) state.selectSystem(sys);
-      else {
-        const reg = hitTestRegion(x, y);
-        if (reg) state.selectEntity({ c: 'regions', id: reg });
-        else state.clearSelection();
-      }
       drag.mode = 'pan';
       return;
     }
@@ -455,9 +577,24 @@ export function MapCanvas() {
             ? state.selectedEntity.id
             : null;
         const ann = hitTestAnnotation(x, y, selEntId);
-        const obj = ann ? null : hitTestObject(x, y);
-        const hit = ann || obj ? null : hitTest(x, y);
-        const reg = ann || obj || hit ? null : hitTestRegion(x, y);
+        const obj = ann ? null : hitTestObject(x, y, scale);
+        const hit = ann || obj ? null : hitTest(x, y, scale);
+        const selRegionId =
+          state.selectedEntity?.c === 'regions' ? state.selectedEntity.id : null;
+        const reg = ann || obj || hit ? null : hitTestRegion(x, y, selRegionId);
+
+        // Completing a link that was armed from the object inspector. Only a
+        // matching far end closes it; anything else is an ordinary click.
+        if (obj && state.linkFromId && state.linkFromId !== obj) {
+          const from = state.map.objects[state.linkFromId];
+          if (from && from.kind === state.map.objects[obj]?.kind) {
+            state.linkObjects(state.linkFromId, obj);
+            state.setToolOptions({ linkFromId: null });
+            state.selectEntity({ c: 'objects', id: obj });
+            drag.mode = 'none';
+            break;
+          }
+        }
 
         if (ann) {
           state.selectEntity({ c: 'annotations', id: ann.id });
@@ -472,14 +609,6 @@ export function MapCanvas() {
           state.selectEntity({ c: 'objects', id: obj });
           drag.mode = 'ent-move';
           drag.ent = { c: 'objects', id: obj };
-          drag.originX = w.x;
-          drag.originY = w.y;
-          break;
-        }
-        if (reg) {
-          state.selectEntity({ c: 'regions', id: reg });
-          drag.mode = 'ent-move';
-          drag.ent = { c: 'regions', id: reg };
           drag.originX = w.x;
           drag.originY = w.y;
           break;
@@ -499,15 +628,33 @@ export function MapCanvas() {
           drag.originX = w.x;
           drag.originY = w.y;
           drag.tx = false;
+          break;
+        }
+        if (reg) {
+          state.selectEntity({ c: 'regions', id: reg.id });
+          drag.mode = reg.vertex >= 0 ? 'ent-vertex' : 'ent-move';
+          drag.ent = { c: 'regions', id: reg.id };
+          drag.vertex = reg.vertex;
+          drag.originX = w.x;
+          drag.originY = w.y;
+          break;
+        }
+        if (!additive) state.clearSelection();
+        // On a phone a one-finger drag over empty space is panning — the
+        // rubber band needs a mouse, or a second finger to zoom out first.
+        if (drag.touch) {
+          drag.mode = 'pan';
+        } else if (state.marqueeMode === 'lasso' || e.altKey) {
+          drag.mode = 'lasso';
+          lassoRef.current = [{ x, y }];
         } else {
-          if (!additive) state.clearSelection();
           drag.mode = 'marquee';
           marqueeRef.current = { x0: x, y0: y, x1: x, y1: y };
         }
         break;
       }
       case 'add-system': {
-        const hit = hitTest(x, y);
+        const hit = hitTest(x, y, scale);
         if (!hit) {
           const id = state.addSystem(w.x, w.y, {
             ownerId: state.activeEmpireId,
@@ -520,7 +667,7 @@ export function MapCanvas() {
         break;
       }
       case 'connect': {
-        const hit = hitTest(x, y);
+        const hit = hitTest(x, y, scale);
         if (hit) {
           if (!state.connectFromId) {
             state.setConnectFrom(hit);
@@ -537,7 +684,7 @@ export function MapCanvas() {
       case 'paint': {
         // Open the transaction even on a miss so dragging on from empty space
         // keeps painting, and the whole stroke is one undo step.
-        const hit = hitTest(x, y);
+        const hit = hitTest(x, y, scale);
         state.beginTx();
         drag.tx = true;
         if (hit && state.activeEmpireId) state.setOwner(hit, state.activeEmpireId);
@@ -546,17 +693,22 @@ export function MapCanvas() {
       }
       case 'delete': {
         const ann = hitTestAnnotation(x, y, null);
-        const obj = ann ? null : hitTestObject(x, y);
-        const hit = ann || obj ? null : hitTest(x, y);
+        const obj = ann ? null : hitTestObject(x, y, scale);
+        const hit = ann || obj ? null : hitTest(x, y, scale);
         if (ann) state.removeEnt('annotations', ann.id);
         else if (obj) state.removeEnt('objects', obj);
         else if (hit) state.removeSystem(hit);
         else {
-          const reg = hitTestRegion(x, y);
-          if (reg) state.removeEnt('regions', reg);
+          const reg = hitTestRegion(x, y, null);
+          if (reg) state.removeEnt('regions', reg.id);
           else {
             const hl = hitTestHyperlane(x, y);
             if (hl) state.removeHyperlane(hl);
+            else {
+              // Last resort, because gas covers a lot of empty space.
+              const neb = hitTestNebula(x, y);
+              if (neb) state.removeEnt('nebulae', neb);
+            }
           }
         }
         drag.mode = 'none';
@@ -568,7 +720,7 @@ export function MapCanvas() {
         state.beginTx();
         drag.tx = true;
         drag.mode = 'brush';
-        drag.erasing = e.altKey;
+        drag.erasing = state.nebulaErase !== e.altKey;
         drag.dabX = w.x;
         drag.dabY = w.y;
         if (drag.erasing) state.eraseNebula(id, w.x, w.y, state.brushSize);
@@ -576,14 +728,21 @@ export function MapCanvas() {
         break;
       }
       case 'region': {
-        // Size the new label relative to the current zoom so it reads well
-        // right away instead of appearing as a speck or filling the screen.
-        state.addRegion(w.x, w.y, { size: Math.max(12, 46 / cam.zoom) });
-        drag.mode = 'none';
+        if (state.regionMode === 'area') {
+          // Drag out the boundary; it is closed and named on release.
+          regionDraftRef.current = [{ x: w.x, y: w.y }];
+          drag.mode = 'region';
+          dirtyRef.current = true;
+        } else {
+          // Size the new label relative to the current zoom so it reads well
+          // right away instead of appearing as a speck or filling the screen.
+          state.addRegion(w.x, w.y, { size: Math.max(12, 46 / cam.zoom) });
+          drag.mode = 'none';
+        }
         break;
       }
       case 'object': {
-        const hit = hitTest(x, y);
+        const hit = hitTest(x, y, scale);
         const sys = hit ? state.map.systems[hit] : null;
         state.addObject(
           sys ? sys.x + 22 / cam.zoom : w.x,
@@ -641,6 +800,24 @@ export function MapCanvas() {
 
   const onPointerMove = (e: React.PointerEvent) => {
     const { x, y } = localPos(e);
+    if (pointersRef.current.has(e.pointerId)) {
+      pointersRef.current.set(e.pointerId, { x, y });
+    }
+
+    // Two fingers down: zoom about the midpoint and pan with it.
+    if (pointersRef.current.size >= 2) {
+      const now = pinchState();
+      const prev = pinchRef.current;
+      if (now && prev) {
+        const cam = camRef.current;
+        if (prev.d > 0 && now.d > 0) cam.zoomAt(now.x, now.y, now.d / prev.d);
+        cam.panByScreen(now.x - prev.x, now.y - prev.y);
+        dirtyRef.current = true;
+      }
+      pinchRef.current = now;
+      return;
+    }
+
     const drag = dragRef.current;
     const dx = x - drag.lastX;
     const dy = y - drag.lastY;
@@ -694,16 +871,46 @@ export function MapCanvas() {
         state.beginTx();
         drag.tx = true;
       }
-      const a = state.map.annotations[drag.ent.id];
-      if (a) {
-        const points = a.points.map((p, i) =>
-          i === drag.vertex ? { x: w.x, y: w.y } : p
-        );
-        state.updateEnt('annotations', a.id, { points });
+      if (drag.ent.c === 'annotations') {
+        const a = state.map.annotations[drag.ent.id];
+        if (a) {
+          const points = a.points.map((p, i) =>
+            i === drag.vertex ? { x: w.x, y: w.y } : p
+          );
+          state.updateEnt('annotations', a.id, { points });
+        }
+      } else if (drag.ent.c === 'regions') {
+        const r = state.map.regions[drag.ent.id];
+        if (r?.shape) {
+          const shape = r.shape.map((p, i) =>
+            i === drag.vertex ? { x: w.x, y: w.y } : p
+          );
+          const c = polygonCentroid(shape);
+          state.updateEnt('regions', r.id, { shape, x: c.x, y: c.y });
+        }
       }
     } else if (drag.mode === 'draw' && draftRef.current) {
       const d = draftRef.current;
       d.points[d.points.length - 1] = { x: w.x, y: w.y };
+      dirtyRef.current = true;
+    } else if (drag.mode === 'lasso' && lassoRef.current) {
+      const last = lassoRef.current[lassoRef.current.length - 1];
+      if (!last || Math.hypot(x - last.x, y - last.y) > 3) {
+        lassoRef.current.push({ x, y });
+        dirtyRef.current = true;
+      }
+    } else if (drag.mode === 'region' && regionDraftRef.current) {
+      const pts = regionDraftRef.current;
+      const last = pts[pts.length - 1];
+      // Thin as we go: one point per pointer event is far more than the shape
+      // needs, and every extra vertex is another handle to fight with later.
+      if (!last || Math.hypot(w.x - last.x, w.y - last.y) > 12 / cam.zoom) {
+        pts.push({ x: w.x, y: w.y });
+        dirtyRef.current = true;
+      }
+    } else if (drag.mode === 'marquee' && marqueeRef.current) {
+      marqueeRef.current.x1 = x;
+      marqueeRef.current.y1 = y;
       dirtyRef.current = true;
     } else if (drag.mode === 'brush' && state.activeNebulaId) {
       // Space the dabs out so a slow drag doesn't pile up thousands of them.
@@ -719,7 +926,7 @@ export function MapCanvas() {
           ]);
       }
     } else if (state.tool === 'paint' && drag.tx && e.buttons) {
-      const hit = hitTest(x, y);
+      const hit = hitTest(x, y, drag.touch ? TOUCH_HIT_SCALE : 1);
       if (hit && state.activeEmpireId) state.setOwner(hit, state.activeEmpireId);
     } else if (draftRef.current && draftRef.current.kind === 'polygon') {
       // Rubber-band the next polygon vertex to the cursor.
@@ -732,7 +939,7 @@ export function MapCanvas() {
     drag.lastY = y;
   };
 
-  /** Shift an entity by a world delta (annotations move all their points). */
+  /** Shift an entity by a world delta (multi-point shapes move every point). */
   const moveEntity = (ref: EntityRef, dx: number, dy: number) => {
     const state = useEditor.getState();
     if (ref.c === 'annotations') {
@@ -749,22 +956,57 @@ export function MapCanvas() {
     } else if (ref.c === 'regions') {
       const r = state.map.regions[ref.id];
       if (!r) return;
-      state.updateEnt('regions', ref.id, { x: r.x + dx, y: r.y + dy });
+      state.updateEnt('regions', ref.id, {
+        x: r.x + dx,
+        y: r.y + dy,
+        ...(r.shape
+          ? { shape: r.shape.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
+          : {}),
+      });
     }
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
     (e.target as Element).releasePointerCapture?.(e.pointerId);
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pinchedRef.current) {
+      // Lifting one finger of a pinch must not be read as a click.
+      if (pointersRef.current.size === 0) pinchedRef.current = false;
+      return;
+    }
+
     const drag = dragRef.current;
     const state = useEditor.getState();
+    const cam = camRef.current;
     const wasMoving = drag.mode === 'move';
+    const { x, y } = localPos(e);
+    const scale = drag.touch ? TOUCH_HIT_SCALE : 1;
+
+    // A guest's tap: decide now, so a pan doesn't select everything it passes.
+    if (state.readOnly) {
+      if (!drag.moved) {
+        const obj = hitTestObject(x, y, scale);
+        const sys = obj ? null : hitTest(x, y, scale);
+        if (obj) state.selectEntity({ c: 'objects', id: obj });
+        else if (sys) state.selectSystem(sys);
+        else {
+          // A reader has no selection box to protect, so tapping anywhere in
+          // a sector is a fair way to ask about it.
+          const reg = hitTestRegion(x, y, null, true);
+          if (reg) state.selectEntity({ c: 'regions', id: reg.id });
+          else state.clearSelection();
+        }
+      }
+      drag.mode = 'none';
+      return;
+    }
 
     if (drag.mode === 'marquee' && marqueeRef.current) {
       const m = marqueeRef.current;
       const additive = e.shiftKey || e.ctrlKey || e.metaKey;
       // A click without movement just clears; a real box selects what's inside.
       if (Math.abs(m.x1 - m.x0) > 3 || Math.abs(m.y1 - m.y0) > 3) {
-        const cam = camRef.current;
         const x0 = Math.min(m.x0, m.x1);
         const x1 = Math.max(m.x0, m.x1);
         const y0 = Math.min(m.y0, m.y1);
@@ -774,12 +1016,45 @@ export function MapCanvas() {
           const p = cam.worldToScreen(s.x, s.y);
           if (p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1) inside.push(s.id);
         }
-        const next = additive
-          ? [...new Set([...state.selection, ...inside])]
-          : inside;
-        state.setSelection(next);
+        commitSelection(inside, additive);
+      } else {
+        // A plain click on empty space: the only way to grab a nebula, which
+        // has no outline of its own to aim at.
+        const neb = hitTestNebula(x, y);
+        if (neb) state.selectEntity({ c: 'nebulae', id: neb });
       }
       marqueeRef.current = null;
+      dirtyRef.current = true;
+    }
+
+    if (drag.mode === 'lasso' && lassoRef.current) {
+      const loop = lassoRef.current;
+      const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+      if (loop.length >= 3) {
+        const inside: string[] = [];
+        for (const s of Object.values(state.map.systems)) {
+          const p = cam.worldToScreen(s.x, s.y);
+          if (pointInPolygon(p.x, p.y, loop)) inside.push(s.id);
+        }
+        commitSelection(inside, additive);
+      }
+      lassoRef.current = null;
+      dirtyRef.current = true;
+    }
+
+    if (drag.mode === 'region' && regionDraftRef.current) {
+      const pts = thinPath(regionDraftRef.current, 8 / cam.zoom);
+      regionDraftRef.current = null;
+      if (pts.length >= 3) {
+        const b = polygonBounds(pts);
+        const c = polygonCentroid(pts);
+        // Fit the label to the area it names rather than to the current zoom.
+        const span = Math.max(b.maxX - b.minX, b.maxY - b.minY);
+        state.addRegion(c.x, c.y, {
+          shape: pts,
+          size: Math.max(10, span * 0.13),
+        });
+      }
       dirtyRef.current = true;
     }
 
@@ -789,7 +1064,7 @@ export function MapCanvas() {
       const a = d.points[0];
       const b = d.points[1];
       // Ignore an accidental click that produced a zero-size shape.
-      if (Math.hypot(b.x - a.x, b.y - a.y) > 1 / camRef.current.zoom) {
+      if (Math.hypot(b.x - a.x, b.y - a.y) > 1 / cam.zoom) {
         const { id: _id, ...rest } = d;
         state.addAnnotation(rest);
       }
@@ -812,6 +1087,13 @@ export function MapCanvas() {
     if (wasMoving) dirtyRef.current = true;
   };
 
+  const commitSelection = (ids: string[], additive: boolean) => {
+    const state = useEditor.getState();
+    state.setSelection(
+      additive ? [...new Set([...state.selection, ...ids])] : ids
+    );
+  };
+
   const onWheel = (e: React.WheelEvent) => {
     const rect = canvasRef.current!.getBoundingClientRect();
     const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
@@ -827,6 +1109,7 @@ export function MapCanvas() {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
         onPointerLeave={() => {
           cursorRef.current.inside = false;
           dirtyRef.current = true;

@@ -104,9 +104,21 @@ export interface Nebula {
   blobs: { x: number; y: number; r: number }[];
   showName: boolean;
   notes?: string;
+  /** how filamentary the gas is: 0 = smooth haze, 1 = torn and stringy */
+  texture?: number;
+  /** size of the largest noise features, in world units */
+  detail?: number;
+  /** noise seed, so two clouds never share the same pattern */
+  seed?: number;
 }
 
-/** A named area of the galaxy — a sector, cluster or reach. Just a label. */
+/**
+ * A named area of the galaxy — a sector, cluster or reach.
+ *
+ * Two flavours share one type. Without `shape` it is only a wide label dropped
+ * on the map (how regions started out). With `shape` it is a real area: a drawn
+ * boundary whose systems can be counted, with the label placed inside it.
+ */
 export interface MapRegion {
   id: ID;
   name: string;
@@ -118,6 +130,10 @@ export interface MapRegion {
   /** extra letter spacing as a fraction of the font size */
   spacing?: number;
   notes?: string;
+  /** boundary polygon in world coordinates; absent = label only */
+  shape?: Point[];
+  /** area fill opacity, 0 = outline only */
+  fillAlpha?: number;
 }
 
 export type ObjectKind =

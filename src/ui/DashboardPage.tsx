@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, RemoteMap, SessionUser, viewerLink } from '../net/api';
 import { navigate, paths } from './routes';
-import { InviteSection } from './InviteSection';
+import { InviteDialog } from './InviteDialog';
 import { AccessSection } from './AccessSection';
 import { GenerateDialog } from './GenerateDialog';
 import { useEditor } from '../model/store';
@@ -22,6 +22,7 @@ export function DashboardPage({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
+  const [showInvites, setShowInvites] = useState(false);
   const [sharing, setSharing] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -280,11 +281,21 @@ export function DashboardPage({
           <div className="panel dash-panel">
             <div className="panel-header">
               <span>Administration</span>
+              <button className="mini-btn" onClick={() => setShowInvites(true)}>
+                🔑 Invite codes…
+              </button>
             </div>
-            <InviteSection onError={setError} />
+            <div className="panel-note">
+              Codes let a new person register. They are shown in their own
+              window so they aren't left on screen.
+            </div>
           </div>
         )}
       </main>
+
+      {showInvites && (
+        <InviteDialog onClose={() => setShowInvites(false)} onError={setError} />
+      )}
 
       {showGenerate && (
         <GenerateDialog

@@ -183,6 +183,18 @@ export class TerritoryRenderer {
     );
     if (owned.length === 0) return;
 
+    /**
+     * Unclaimed systems are competitors too. They win the cells nearest to
+     * them exactly as an empire would, which stops a neighbour's blob from
+     * flowing over an independent system — but nothing is ever *drawn* for
+     * them, so the effect reads as an empire politely stopping short.
+     */
+    const neutral = this.display.neutralBorders
+      ? systems.filter(
+          (s) => (!s.ownerId || !empires[s.ownerId]) && s.influence > 0
+        )
+      : [];
+
     // World bounds of all territory, padded by the largest influence radius.
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     let maxInf = 0;
@@ -246,6 +258,22 @@ export class TerritoryRenderer {
         if (v > best[p]) { best[p] = v; owner[p] = ei; }
       }
       ei++;
+    }
+
+    // The unclaimed, run once as a single nameless group: they can only take
+    // cells away from an empire, never paint any of their own (owner -1).
+    const nearby = neutral.filter(
+      (s) =>
+        s.x + s.influence > minX &&
+        s.x - s.influence < maxX &&
+        s.y + s.influence > minY &&
+        s.y - s.influence < maxY
+    );
+    if (nearby.length > 0) {
+      const fd = this.influenceField(nearby, minX, minY, ppw, rw, rh);
+      for (let i = 0, p = 0; p < px; i += 4, p++) {
+        if (fd[i] > best[p]) { best[p] = fd[i]; owner[p] = -1; }
+      }
     }
 
     const T = this.THRESHOLD;

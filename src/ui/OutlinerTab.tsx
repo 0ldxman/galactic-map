@@ -3,6 +3,7 @@ import { useEditor } from '../model/store';
 import { EntColl } from '../model/ops';
 import { DisplaySettings, resolveDisplay } from '../model/display';
 import { OBJECT_BY_ID } from '../model/objects';
+import { lighten } from '../util/color';
 
 interface Row {
   id: string;
@@ -30,6 +31,7 @@ export function OutlinerTab() {
   const addEmpire = useEditor((s) => s.addEmpire);
   const removeEmpire = useEditor((s) => s.removeEmpire);
   const updateEmpire = useEditor((s) => s.updateEmpire);
+  const removeEnt = useEditor((s) => s.removeEnt);
   const setDisplay = useEditor((s) => s.setDisplay);
   const focusOn = useEditor((s) => s.focusOn);
   const display = resolveDisplay(map.display);
@@ -119,11 +121,22 @@ export function OutlinerTab() {
     </div>
   );
 
-  const entRows = (coll: EntColl, list: { id: string; name: string }[], go: (id: string) => void) => (
+  /**
+   * A list of entities with a delete button on every row. Nebulae in
+   * particular have no outline of their own to click on the map, so the
+   * outliner is where they get selected and thrown away.
+   */
+  const entRows = (
+    coll: EntColl,
+    list: { id: string; name: string }[],
+    go: (id: string) => void,
+    swatch?: (id: string) => string | undefined,
+    sub?: (id: string) => string | undefined
+  ) => (
     <div className="out-list">
       {list.length === 0 && <div className="empty-hint">None yet.</div>}
       {list.map((e) => (
-        <button
+        <div
           key={e.id}
           className={`out-row${
             selectedEntity?.c === coll && selectedEntity.id === e.id ? ' active' : ''
@@ -133,8 +146,22 @@ export function OutlinerTab() {
             go(e.id);
           }}
         >
+          {swatch && (
+            <span className="peer-dot" style={{ background: swatch(e.id) }} />
+          )}
           <span className="out-name">{e.name}</span>
-        </button>
+          {sub && <span className="out-sub">{sub(e.id)}</span>}
+          <button
+            className="chip-x"
+            title="Delete"
+            onClick={(ev) => {
+              ev.stopPropagation();
+              removeEnt(coll, e.id);
+            }}
+          >
+            ✕
+          </button>
+        </div>
       ))}
     </div>
   );
@@ -190,34 +217,62 @@ export function OutlinerTab() {
         'showTerritories',
         <div className="out-list">
           {empires.map((e) => (
-            <div
-              key={e.id}
-              className={`out-row${activeEmpireId === e.id ? ' active' : ''}`}
-              onClick={() => setActiveEmpire(e.id)}
-            >
-              <input
-                type="color"
-                value={e.color}
-                onClick={(ev) => ev.stopPropagation()}
-                onChange={(ev) => updateEmpire(e.id, { color: ev.target.value })}
-              />
-              <input
-                className="out-input"
-                value={e.name}
-                onClick={(ev) => ev.stopPropagation()}
-                onChange={(ev) => updateEmpire(e.id, { name: ev.target.value })}
-              />
-              <span className="out-sub">{counts.get(e.id) ?? 0}</span>
-              <button
-                className="chip-x"
-                title="Delete empire"
-                onClick={(ev) => {
-                  ev.stopPropagation();
-                  removeEmpire(e.id);
-                }}
+            <div key={e.id} className="out-empire">
+              <div
+                className={`out-row${activeEmpireId === e.id ? ' active' : ''}`}
+                onClick={() => setActiveEmpire(e.id)}
               >
-                ✕
-              </button>
+                <input
+                  type="color"
+                  title="Territory fill"
+                  value={e.color}
+                  onClick={(ev) => ev.stopPropagation()}
+                  onChange={(ev) => updateEmpire(e.id, { color: ev.target.value })}
+                />
+                <input
+                  className="out-input"
+                  value={e.name}
+                  onClick={(ev) => ev.stopPropagation()}
+                  onChange={(ev) => updateEmpire(e.id, { name: ev.target.value })}
+                />
+                <span className="out-sub">{counts.get(e.id) ?? 0}</span>
+                <button
+                  className="chip-x"
+                  title="Delete empire"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    removeEmpire(e.id);
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+              {/* The border colour is a second thought about one empire, not
+                  something to scan a list for — so it only unfolds for the
+                  one you are working on. */}
+              {activeEmpireId === e.id && (
+                <div className="out-detail">
+                  <span>Border</span>
+                  <input
+                    type="color"
+                    value={e.borderColor ?? lighten(e.color)}
+                    onChange={(ev) =>
+                      updateEmpire(e.id, { borderColor: ev.target.value })
+                    }
+                  />
+                  {e.borderColor ? (
+                    <button
+                      className="mini-btn"
+                      title="Go back to a lightened fill colour"
+                      onClick={() => updateEmpire(e.id, { borderColor: undefined })}
+                    >
+                      Auto
+                    </button>
+                  ) : (
+                    <span className="out-sub">auto from fill</span>
+                  )}
+                </div>
+              )}
             </div>
           ))}
           <button className="mini-btn" onClick={() => addEmpire()}>
@@ -234,10 +289,16 @@ export function OutlinerTab() {
         'Nebulae',
         Object.keys(map.nebulae).length,
         'showNebulae',
-        entRows('nebulae', Object.values(map.nebulae), (id) => {
-          const n = map.nebulae[id];
-          if (n?.blobs.length) goTo(n.blobs[0].x, n.blobs[0].y);
-        })
+        entRows(
+          'nebulae',
+          Object.values(map.nebulae),
+          (id) => {
+            const n = map.nebulae[id];
+            if (n?.blobs.length) goTo(n.blobs[0].x, n.blobs[0].y);
+          },
+          (id) => map.nebulae[id]?.color,
+          (id) => `${map.nebulae[id]?.blobs.length ?? 0} dabs`
+        )
       )}
 
       {section(
@@ -245,10 +306,16 @@ export function OutlinerTab() {
         'Regions',
         Object.keys(map.regions).length,
         'showRegions',
-        entRows('regions', Object.values(map.regions), (id) => {
-          const r = map.regions[id];
-          if (r) goTo(r.x, r.y);
-        })
+        entRows(
+          'regions',
+          Object.values(map.regions),
+          (id) => {
+            const r = map.regions[id];
+            if (r) goTo(r.x, r.y);
+          },
+          (id) => map.regions[id]?.color ?? '#c9d6f2',
+          (id) => (map.regions[id]?.shape ? 'area' : 'label')
+        )
       )}
 
       {section(
@@ -256,32 +323,26 @@ export function OutlinerTab() {
         'Objects',
         Object.keys(map.objects).length,
         'showObjects',
-        <div className="out-list">
-          {Object.values(map.objects).length === 0 && (
-            <div className="empty-hint">None yet.</div>
-          )}
-          {Object.values(map.objects).map((o) => (
-            <button
-              key={o.id}
-              className={`out-row${
-                selectedEntity?.c === 'objects' && selectedEntity.id === o.id
-                  ? ' active'
-                  : ''
-              }`}
-              onClick={() => {
-                selectEntity({ c: 'objects', id: o.id });
-                goTo(o.x, o.y);
-              }}
-            >
-              <span
-                className="peer-dot"
-                style={{ background: o.color ?? OBJECT_BY_ID[o.kind]?.color }}
-              />
-              <span className="out-name">{o.name}</span>
-              <span className="out-sub">{OBJECT_BY_ID[o.kind]?.label}</span>
-            </button>
-          ))}
-        </div>
+        entRows(
+          'objects',
+          Object.values(map.objects),
+          (id) => {
+            const o = map.objects[id];
+            if (o) goTo(o.x, o.y);
+          },
+          (id) => {
+            const o = map.objects[id];
+            return o?.color ?? OBJECT_BY_ID[o?.kind ?? '']?.color;
+          },
+          (id) => {
+            const o = map.objects[id];
+            if (!o) return undefined;
+            const other = o.linkedId ? map.objects[o.linkedId] : null;
+            // Showing the far end here is the quickest way to see which gates
+            // are actually joined up and which are still dangling.
+            return other ? `↔ ${other.name}` : OBJECT_BY_ID[o.kind]?.label;
+          }
+        )
       )}
 
       {section(
@@ -289,30 +350,18 @@ export function OutlinerTab() {
         'Annotations',
         Object.keys(map.annotations).length,
         'showAnnotations',
-        <div className="out-list">
-          {Object.values(map.annotations).length === 0 && (
-            <div className="empty-hint">None yet.</div>
-          )}
-          {Object.values(map.annotations).map((a) => (
-            <button
-              key={a.id}
-              className={`out-row${
-                selectedEntity?.c === 'annotations' && selectedEntity.id === a.id
-                  ? ' active'
-                  : ''
-              }`}
-              onClick={() => {
-                selectEntity({ c: 'annotations', id: a.id });
-                if (a.points[0]) goTo(a.points[0].x, a.points[0].y);
-              }}
-            >
-              <span className="peer-dot" style={{ background: a.color }} />
-              <span className="out-name">
-                {a.kind === 'text' ? a.text || '(empty text)' : a.kind}
-              </span>
-            </button>
-          ))}
-        </div>
+        entRows(
+          'annotations',
+          Object.values(map.annotations).map((a) => ({
+            id: a.id,
+            name: a.kind === 'text' ? a.text || '(empty text)' : a.kind,
+          })),
+          (id) => {
+            const a = map.annotations[id];
+            if (a?.points[0]) goTo(a.points[0].x, a.points[0].y);
+          },
+          (id) => map.annotations[id]?.color
+        )
       )}
     </>
   );

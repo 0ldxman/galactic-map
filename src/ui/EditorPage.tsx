@@ -36,7 +36,9 @@ export function EditorPage({ mapId }: { mapId: string | null }) {
   const [width, setWidth] = useState(
     () => Number(localStorage.getItem(WIDTH_KEY)) || 320
   );
-  const [collapsed, setCollapsed] = useState(false);
+  // On a phone the panel is an overlay drawer; starting it open would hide the
+  // map behind it, so it starts out of the way.
+  const [collapsed, setCollapsed] = useState(() => window.innerWidth < 820);
   const setMap = useEditor((s) => s.setMap);
   const readOnly = useEditor((s) => s.readOnly);
   const status = useSync((s) => s.status);

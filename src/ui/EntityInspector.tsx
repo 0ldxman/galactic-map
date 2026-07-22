@@ -1,6 +1,7 @@
 import { useEditor, EntityRef } from '../model/store';
 import { AnnotationKind, ObjectKind } from '../model/types';
 import { OBJECT_TYPES, OBJECT_BY_ID } from '../model/objects';
+import { pointInPolygon } from '../util/geom';
 import { Notes } from './Notes';
 
 const TITLES: Record<EntityRef['c'], string> = {
@@ -18,6 +19,7 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
   const linkObjects = useEditor((s) => s.linkObjects);
   const linkFromId = useEditor((s) => s.linkFromId);
   const setToolOptions = useEditor((s) => s.setToolOptions);
+  const focusOn = useEditor((s) => s.focusOn);
 
   const ent = map[sel.c][sel.id];
   if (!ent) return null;
@@ -67,7 +69,59 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
             }
           />
         </label>
-        <div className="panel-note">{n.blobs.length} brush dabs</div>
+        <label className="field">
+          <span>Texture: {(n.texture ?? 0.75).toFixed(2)}</span>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={n.texture ?? 0.75}
+            onChange={(e) =>
+              updateEnt('nebulae', n.id, { texture: Number(e.target.value) })
+            }
+          />
+        </label>
+        <label className="field">
+          <span>Filament size: {Math.round(n.detail ?? 320)}</span>
+          <input
+            type="range"
+            min={60}
+            max={1200}
+            step={10}
+            value={n.detail ?? 320}
+            onChange={(e) =>
+              updateEnt('nebulae', n.id, { detail: Number(e.target.value) })
+            }
+          />
+        </label>
+        <div className="btn-row">
+          <button
+            className="mini-btn"
+            title="Reshuffle the noise for a different cloud of the same size"
+            onClick={() =>
+              updateEnt('nebulae', n.id, {
+                seed: Math.floor(Math.random() * 0xffffff),
+              })
+            }
+          >
+            ⟳ New pattern
+          </button>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={n.showName}
+              onChange={(e) =>
+                updateEnt('nebulae', n.id, { showName: e.target.checked })
+              }
+            />
+            <span>Show name</span>
+          </label>
+        </div>
+        <div className="panel-note">
+          {n.blobs.length} brush dabs. Texture 0 gives the plain soft cloud;
+          higher values tear it into filaments.
+        </div>
         <Notes
           value={n.notes}
           onChange={(v) => updateEnt('nebulae', n.id, { notes: v })}
@@ -78,6 +132,11 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
 
   if (sel.c === 'regions') {
     const r = map.regions[sel.id];
+    const inside = r.shape
+      ? Object.values(map.systems).filter((s) =>
+          pointInPolygon(s.x, s.y, r.shape!)
+        )
+      : [];
     return (
       <div className="panel">
         {header}
@@ -88,6 +147,47 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
             onChange={(e) => updateEnt('regions', r.id, { name: e.target.value })}
           />
         </label>
+        {r.shape ? (
+          <>
+            <div className="kv">
+              <span>Systems inside</span>
+              <b>{inside.length}</b>
+            </div>
+            <label className="field">
+              <span>Area fill: {(r.fillAlpha ?? 0.1).toFixed(2)}</span>
+              <input
+                type="range"
+                min={0}
+                max={0.4}
+                step={0.01}
+                value={r.fillAlpha ?? 0.1}
+                onChange={(e) =>
+                  updateEnt('regions', r.id, {
+                    fillAlpha: Number(e.target.value),
+                  })
+                }
+              />
+            </label>
+            <div className="btn-row">
+              <button
+                className="mini-btn"
+                title="Keep the name, drop the boundary"
+                onClick={() => updateEnt('regions', r.id, { shape: undefined })}
+              >
+                Drop the outline
+              </button>
+            </div>
+            <div className="panel-note">
+              Drag the handles to reshape it, or drag inside to move the whole
+              sector. {r.shape.length} points.
+            </div>
+          </>
+        ) : (
+          <div className="panel-note">
+            A bare label. Draw a boundary with the Region tool in Area mode to
+            make it a real sector.
+          </div>
+        )}
         <label className="field">
           <span>Size: {Math.round(r.size)}</span>
           <input
@@ -134,6 +234,12 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
     const type = OBJECT_BY_ID[o.kind];
     const linked = o.linkedId ? map.objects[o.linkedId] : null;
     const linking = linkFromId === o.id;
+    // A passage joins to one of its own kind — a wormhole doesn't open onto a
+    // gateway. Ends that are already taken stay on the list, and picking one
+    // moves the link rather than silently doing nothing.
+    const candidates = Object.values(map.objects).filter(
+      (c) => c.id !== o.id && c.kind === o.kind
+    );
     return (
       <div className="panel">
         {header}
@@ -168,44 +274,66 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
           />
         </label>
 
-        <div className="field">
-          <span>Link</span>
-          {linked ? (
-            <div className="link-row">
-              <span className="link-name">↔ {linked.name}</span>
-              <button
-                className="mini-btn"
-                onClick={() => {
-                  updateEnt('objects', o.id, { linkedId: null });
-                  updateEnt('objects', linked.id, { linkedId: null });
-                }}
-              >
-                Unlink
-              </button>
-            </div>
-          ) : linkFromId && linkFromId !== o.id ? (
-            <button
-              className="mini-btn"
-              onClick={() => {
-                linkObjects(linkFromId, o.id);
-                setToolOptions({ linkFromId: null });
-              }}
-            >
-              Link to {map.objects[linkFromId]?.name ?? 'selected'}
-            </button>
-          ) : (
-            <button
-              className="mini-btn"
-              onClick={() =>
-                setToolOptions({ linkFromId: linking ? null : o.id })
-              }
-            >
-              {linking
-                ? 'Cancel — now pick the other end'
-                : 'Start a link from here'}
-            </button>
-          )}
-        </div>
+        {/* Only passages lead somewhere. A debris field has no far end, so it
+            isn't offered one. */}
+        {type?.pairs && (
+          <div className="field">
+            <span>Leads to</span>
+            {linked ? (
+              <div className="link-row">
+                <span className="link-name">↔ {linked.name}</span>
+                <button
+                  className="mini-btn"
+                  onClick={() => focusOn(linked.x, linked.y)}
+                  title="Jump to the other end"
+                >
+                  Go
+                </button>
+                <button
+                  className="mini-btn"
+                  onClick={() => {
+                    updateEnt('objects', o.id, { linkedId: null });
+                    updateEnt('objects', linked.id, { linkedId: null });
+                  }}
+                >
+                  Unlink
+                </button>
+              </div>
+            ) : (
+              <>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) linkObjects(o.id, e.target.value);
+                  }}
+                >
+                  <option value="">— pick the far end —</option>
+                  {candidates.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                      {c.linkedId ? ' (relinks)' : ''}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className={`mini-btn${linking ? ' danger' : ''}`}
+                  onClick={() =>
+                    setToolOptions({ linkFromId: linking ? null : o.id })
+                  }
+                >
+                  {linking
+                    ? '✕ Cancel — or click the other end on the map'
+                    : '⇢ Pick the far end on the map'}
+                </button>
+                {candidates.length === 0 && (
+                  <div className="panel-note">
+                    Nothing to link to yet — drop a second {type.label} first.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         <Notes
           value={o.notes}

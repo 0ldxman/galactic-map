@@ -1,6 +1,6 @@
 import { useEditor } from '../model/store';
 import { AnnotationKind, ObjectKind } from '../model/types';
-import { OBJECT_TYPES } from '../model/objects';
+import { OBJECT_TYPES, OBJECT_BY_ID } from '../model/objects';
 
 const ANNOTATION_KINDS: { id: AnnotationKind; label: string; hint: string }[] = [
   { id: 'text', label: 'Text', hint: 'Click to place a label' },
@@ -21,14 +21,19 @@ export function ToolOptionsBar() {
   const setToolOptions = useEditor((s) => s.setToolOptions);
   const brushSize = useEditor((s) => s.brushSize);
   const activeNebulaId = useEditor((s) => s.activeNebulaId);
+  const nebulaErase = useEditor((s) => s.nebulaErase);
   const objectKind = useEditor((s) => s.objectKind);
   const annotationKind = useEditor((s) => s.annotationKind);
   const annotationColor = useEditor((s) => s.annotationColor);
+  const marqueeMode = useEditor((s) => s.marqueeMode);
+  const regionMode = useEditor((s) => s.regionMode);
   const activeEmpireId = useEditor((s) => s.activeEmpireId);
   const setActiveEmpire = useEditor((s) => s.setActiveEmpire);
   const addNebula = useEditor((s) => s.addNebula);
+  const removeEnt = useEditor((s) => s.removeEnt);
   const updateEnt = useEditor((s) => s.updateEnt);
   const selection = useEditor((s) => s.selection);
+  const linkFromId = useEditor((s) => s.linkFromId);
 
   const empires = Object.values(map.empires);
   const empirePicker = (
@@ -59,11 +64,31 @@ export function ToolOptionsBar() {
   switch (tool) {
     case 'select':
       body = (
-        <span className="opt-hint">
-          {selection.length > 1
-            ? `${selection.length} systems selected`
-            : 'Drag a box to select · Shift adds · right-drag pans'}
-        </span>
+        <>
+          <div className="opt-seg">
+            <button
+              className={`seg-btn${marqueeMode === 'box' ? ' active' : ''}`}
+              title="Drag a rectangle"
+              onClick={() => setToolOptions({ marqueeMode: 'box' })}
+            >
+              ▭ Box
+            </button>
+            <button
+              className={`seg-btn${marqueeMode === 'lasso' ? ' active' : ''}`}
+              title="Draw a free loop around what you want"
+              onClick={() => setToolOptions({ marqueeMode: 'lasso' })}
+            >
+              ✎ Lasso
+            </button>
+          </div>
+          <span className="opt-hint">
+            {selection.length > 1
+              ? `${selection.length} systems selected`
+              : marqueeMode === 'lasso'
+                ? 'Draw a loop · Shift adds · right-drag pans'
+                : 'Drag a box · Alt-drag lassoes · Shift adds · right-drag pans'}
+          </span>
+        </>
       );
       break;
 
@@ -129,8 +154,37 @@ export function ToolOptionsBar() {
                   }
                 />
               </label>
+              <label className="opt">
+                <span>Texture</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={active.texture ?? 0.75}
+                  onChange={(e) =>
+                    updateEnt('nebulae', active.id, {
+                      texture: Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
             </>
           )}
+          <div className="opt-seg">
+            <button
+              className={`seg-btn${nebulaErase ? '' : ' active'}`}
+              onClick={() => setToolOptions({ nebulaErase: false })}
+            >
+              Paint
+            </button>
+            <button
+              className={`seg-btn${nebulaErase ? ' active' : ''}`}
+              onClick={() => setToolOptions({ nebulaErase: true })}
+            >
+              Erase
+            </button>
+          </div>
           <label className="opt">
             <span>Brush {Math.round(brushSize)}</span>
             <input
@@ -141,7 +195,20 @@ export function ToolOptionsBar() {
               onChange={(e) => setToolOptions({ brushSize: Number(e.target.value) })}
             />
           </label>
-          <span className="opt-hint">Alt-drag erases</span>
+          {active && (
+            <button
+              className="mini-btn danger"
+              title="Delete this nebula and everything painted into it"
+              onClick={() => {
+                if (confirm(`Delete "${active.name}" and all its gas?`)) {
+                  removeEnt('nebulae', active.id);
+                }
+              }}
+            >
+              🗑 Delete cloud
+            </button>
+          )}
+          <span className="opt-hint">Alt flips paint / erase</span>
         </div>
       );
     }
@@ -165,7 +232,11 @@ export function ToolOptionsBar() {
             </select>
           </label>
           <span className="opt-hint">
-            Clicking a system pins the object beside it
+            {linkFromId
+              ? 'Linking — switch to Select and click the other end'
+              : OBJECT_BY_ID[objectKind]?.pairs
+                ? 'Click a system to pin it · drop two and link them in Properties'
+                : 'Clicking a system pins the object beside it'}
           </span>
         </>
       );
@@ -202,7 +273,31 @@ export function ToolOptionsBar() {
       break;
 
     case 'region':
-      body = <span className="opt-hint">Click to drop a sector name</span>;
+      body = (
+        <>
+          <div className="opt-seg">
+            <button
+              className={`seg-btn${regionMode === 'area' ? ' active' : ''}`}
+              title="Draw the sector's boundary"
+              onClick={() => setToolOptions({ regionMode: 'area' })}
+            >
+              ⬠ Area
+            </button>
+            <button
+              className={`seg-btn${regionMode === 'label' ? ' active' : ''}`}
+              title="Just a wide name across the map"
+              onClick={() => setToolOptions({ regionMode: 'label' })}
+            >
+              A Label
+            </button>
+          </div>
+          <span className="opt-hint">
+            {regionMode === 'area'
+              ? 'Drag a loop around the sector — it closes itself'
+              : 'Click to drop a sector name'}
+          </span>
+        </>
+      );
       break;
 
     case 'connect':

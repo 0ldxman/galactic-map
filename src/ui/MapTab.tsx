@@ -64,6 +64,31 @@ export function MapTab({
         {slider('fillAlpha', 'Fill opacity', 0, 0.6, 0.01)}
         {slider('empireNameScale', 'Empire name size', 0.3, 3, 0.05)}
         {slider('systemNameZoom', 'System names from zoom', 0.2, 6, 0.1, 1)}
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={display.neutralBorders}
+            onChange={(e) => setDisplay({ neutralBorders: e.target.checked })}
+          />
+          <span>Unclaimed systems hold their space</span>
+        </label>
+        <div className="panel-note">
+          On, an independent system pushes its neighbours' borders back to the
+          midpoint instead of being swallowed. Nothing is drawn for it.
+        </div>
+      </div>
+
+      <div className="tab-section">
+        <div className="tab-title">Nebulae</div>
+        {slider('nebulaTexture', 'Texture', 0, 1.5, 0.05)}
+        {slider('nebulaBrightness', 'Brightness', 0.2, 2, 0.05)}
+        {slider('nebulaDetail', 'Detail', 0.4, 2.5, 0.1, 1)}
+        <div className="panel-note">
+          Texture turns smooth haze into filaments across every cloud at once;
+          each nebula can still be tuned on its own. Detail is the resolution
+          the gas is baked at — raise it for a close-up or an export, lower it
+          if painting feels heavy.
+        </div>
       </div>
 
       <div className="tab-section">

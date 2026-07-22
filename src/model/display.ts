@@ -30,6 +30,20 @@ export interface DisplaySettings {
   systemNameZoom: number;
   /** multiplier on the empire-label size derived from territory area */
   empireNameScale: number;
+
+  /**
+   * Unclaimed systems project influence of their own, so a neighbouring empire
+   * stops halfway instead of swallowing them. Their own borders are never
+   * drawn — they exist only to hold the space open.
+   */
+  neutralBorders: boolean;
+
+  /** global multiplier on every cloud's filament strength */
+  nebulaTexture: number;
+  /** resolution of the baked nebula texture (higher = finer, slower) */
+  nebulaDetail: number;
+  /** brightness of the gas */
+  nebulaBrightness: number;
 }
 
 export const DEFAULT_DISPLAY: DisplaySettings = {
@@ -55,6 +69,12 @@ export const DEFAULT_DISPLAY: DisplaySettings = {
 
   systemNameZoom: 1.3,
   empireNameScale: 1,
+
+  neutralBorders: true,
+
+  nebulaTexture: 1,
+  nebulaDetail: 1,
+  nebulaBrightness: 1,
 };
 
 let memoIn: Partial<DisplaySettings> | undefined;

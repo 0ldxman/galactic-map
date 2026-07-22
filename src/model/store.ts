@@ -41,6 +41,12 @@ export type Tool =
 
 export type SelectMode = 'replace' | 'toggle' | 'add';
 
+/** How the select tool sweeps up systems: a rectangle, or a drawn loop. */
+export type MarqueeMode = 'box' | 'lasso';
+
+/** A region is either a bare label or an outlined area (see MapRegion.shape). */
+export type RegionMode = 'label' | 'area';
+
 /** A selected non-system entity (these are edited one at a time). */
 export interface EntityRef {
   c: EntColl;
@@ -75,9 +81,13 @@ export interface EditorState {
   // --- tool options (editor state, not part of the map) ---
   activeNebulaId: ID | null;
   brushSize: number;
+  /** nebula brush erases instead of painting (Alt does the same, held) */
+  nebulaErase: boolean;
   objectKind: ObjectKind;
   annotationKind: AnnotationKind;
   annotationColor: string;
+  marqueeMode: MarqueeMode;
+  regionMode: RegionMode;
   /** object being linked by the "link objects" action */
   linkFromId: ID | null;
   /**
@@ -101,9 +111,12 @@ export interface EditorState {
     o: Partial<{
       activeNebulaId: ID | null;
       brushSize: number;
+      nebulaErase: boolean;
       objectKind: ObjectKind;
       annotationKind: AnnotationKind;
       annotationColor: string;
+      marqueeMode: MarqueeMode;
+      regionMode: RegionMode;
       linkFromId: ID | null;
     }>
   ) => void;
@@ -269,9 +282,12 @@ export const useEditor = create<EditorState>((set, get) => {
 
     activeNebulaId: null,
     brushSize: 60,
+    nebulaErase: false,
     objectKind: 'wormhole',
     annotationKind: 'text',
     annotationColor: '#e2eaf8',
+    marqueeMode: 'box',
+    regionMode: 'area',
     linkFromId: null,
     focusTarget: null,
 
@@ -290,7 +306,14 @@ export const useEditor = create<EditorState>((set, get) => {
       }),
 
     setSelection: (ids) => set({ selection: ids, selectedEntity: null }),
-    selectEntity: (ref) => set({ selectedEntity: ref, selection: [] }),
+    // Picking a nebula anywhere also aims the brush at it, so selecting one in
+    // the outliner and painting does what it looks like it will do.
+    selectEntity: (ref) =>
+      set((s) => ({
+        selectedEntity: ref,
+        selection: [],
+        activeNebulaId: ref?.c === 'nebulae' ? ref.id : s.activeNebulaId,
+      })),
     selectAll: () => set((s) => ({ selection: Object.keys(s.map.systems) })),
     clearSelection: () => set({ selection: [], selectedEntity: null }),
 
@@ -607,6 +630,10 @@ export const useEditor = create<EditorState>((set, get) => {
         opacity: opts?.opacity ?? 0.5,
         blobs: opts?.blobs ?? [],
         showName: opts?.showName ?? true,
+        texture: opts?.texture ?? 0.75,
+        detail: opts?.detail ?? 320,
+        // Its own seed, so two clouds side by side don't wear the same pattern.
+        seed: opts?.seed ?? ((editorRng.float() * 0xffffff) | 0),
       };
       commit([{ t: 'ent.add', c: 'nebulae', ent: neb }]);
       set({ activeNebulaId: id });
@@ -653,6 +680,8 @@ export const useEditor = create<EditorState>((set, get) => {
         size: opts?.size ?? 70,
         color: opts?.color,
         spacing: opts?.spacing ?? 0.35,
+        shape: opts?.shape,
+        fillAlpha: opts?.fillAlpha ?? (opts?.shape ? 0.1 : undefined),
       };
       commit([{ t: 'ent.add', c: 'regions', ent: reg }]);
       set({ selectedEntity: { c: 'regions', id }, selection: [] });
@@ -682,6 +711,9 @@ export const useEditor = create<EditorState>((set, get) => {
       const oa = map.objects[a];
       const ob = map.objects[b];
       if (!oa || !ob || a === b) return;
+      // A passage joins to its own kind: a wormhole opens onto another
+      // wormhole, never onto a gateway, and scenery links to nothing.
+      if (oa.kind !== ob.kind || !OBJECT_BY_ID[oa.kind]?.pairs) return;
       const ops: Op[] = [
         {
           t: 'ent.set',

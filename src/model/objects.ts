@@ -4,7 +4,11 @@ export interface ObjectType {
   id: ObjectKind;
   label: string;
   color: string;
-  /** these come in linked pairs (the renderer draws an arc between the ends) */
+  /**
+   * These lead somewhere: they can be joined to another object of the same
+   * kind, and the renderer draws a bowed arc between the two ends. Kinds
+   * without it are scenery, and the editor doesn't offer to link them.
+   */
   pairs: boolean;
   hint: string;
 }
@@ -12,7 +16,7 @@ export interface ObjectType {
 export const OBJECT_TYPES: ObjectType[] = [
   { id: 'wormhole', label: 'Wormhole', color: '#b58cff', pairs: true, hint: 'Natural pair-linked passage' },
   { id: 'gateway', label: 'Gateway', color: '#7ad6ff', pairs: true, hint: 'Built gate, links to another gate' },
-  { id: 'lgate', label: 'L-Gate', color: '#ff8ad0', pairs: false, hint: 'Ancient sealed gate' },
+  { id: 'lgate', label: 'L-Gate', color: '#ff8ad0', pairs: true, hint: 'Ancient gate, opens onto the L-Cluster' },
   { id: 'debris', label: 'Debris field', color: '#c0c8d8', pairs: false, hint: 'Wreckage of a battle' },
   { id: 'anomaly', label: 'Anomaly', color: '#6fe3b0', pairs: false, hint: 'Unexplained phenomenon' },
   { id: 'derelict', label: 'Derelict', color: '#d8b168', pairs: false, hint: 'Abandoned construct' },

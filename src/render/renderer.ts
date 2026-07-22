@@ -47,6 +47,10 @@ export interface RenderOptions {
   transparent?: boolean;
   /** live rubber-band rectangle, in screen px */
   marquee?: Marquee | null;
+  /** live freehand lasso, in screen px */
+  lasso?: readonly { x: number; y: number }[] | null;
+  /** region boundary being drawn, in world coordinates */
+  draftRegion?: readonly { x: number; y: number }[] | null;
 }
 
 interface BgStar {
@@ -106,7 +110,7 @@ export class Renderer {
     if (!opts.transparent) this.drawBackground(ctx, cam, dsp);
 
     // Nebulae sit under everything political — they are the terrain.
-    this.nebulae.update(map.nebulae, opts.deferTerritory);
+    this.nebulae.update(map.nebulae, opts.deferTerritory, dsp);
     if (dsp.showNebulae) this.nebulae.draw(ctx, cam);
 
     if (dsp.showGrid) this.drawGrid(ctx, cam);
@@ -117,6 +121,10 @@ export class Renderer {
     // Territory borders (rebuilt only when the map changes; drawn as vectors).
     this.territory.update(map.systems, map.empires, opts.deferTerritory, dsp);
     if (dsp.showTerritories) this.territory.draw(ctx, cam);
+
+    // Region boundaries: chart notation drawn over the political fill, under
+    // the stars, so a sector reads as a line on the map rather than terrain.
+    if (dsp.showRegions) this.drawRegionAreas(ctx, map, cam, opts);
 
     // --- Systems: cull to the viewport once, reuse the screen positions. ---
     const margin = 30;
@@ -284,6 +292,7 @@ export class Renderer {
 
     if (opts.peers?.length) this.drawPeers(ctx, cam, opts.peers);
     if (opts.marquee) this.drawMarquee(ctx, opts.marquee);
+    if (opts.lasso && opts.lasso.length > 1) this.drawLasso(ctx, opts.lasso);
   }
 
   /** Co-editors' pointers, so you can see where everyone is working. */
@@ -390,6 +399,68 @@ export class Renderer {
     ctx.textBaseline = 'alphabetic';
   }
 
+  /**
+   * The outlined kind of region: a drawn boundary with a faint wash inside.
+   * Regions that are only a label have no `shape` and are skipped here.
+   */
+  private drawRegionAreas(
+    ctx: CanvasRenderingContext2D,
+    map: GalaxyMap,
+    cam: Camera,
+    opts: RenderOptions
+  ) {
+    const sel =
+      opts.selectedEntity?.c === 'regions' ? opts.selectedEntity.id : null;
+    const shapes: { pts: readonly { x: number; y: number }[]; color: string; fill: number; selected: boolean }[] = [];
+    for (const r of Object.values(map.regions)) {
+      if (!r.shape || r.shape.length < 3) continue;
+      shapes.push({
+        pts: r.shape,
+        color: r.color ?? '#c9d6f2',
+        fill: r.fillAlpha ?? 0.1,
+        selected: r.id === sel,
+      });
+    }
+    if (opts.draftRegion && opts.draftRegion.length >= 2) {
+      shapes.push({ pts: opts.draftRegion, color: '#9fb4ff', fill: 0.08, selected: true });
+    }
+    if (shapes.length === 0) return;
+
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    for (const s of shapes) {
+      ctx.beginPath();
+      for (let i = 0; i < s.pts.length; i++) {
+        const p = cam.worldToScreen(s.pts[i].x, s.pts[i].y);
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      ctx.closePath();
+      if (s.fill > 0) {
+        ctx.fillStyle = withAlpha(s.color, s.fill);
+        ctx.fill();
+      }
+      ctx.strokeStyle = withAlpha(s.color, s.selected ? 0.95 : 0.5);
+      ctx.lineWidth = s.selected ? 2 : 1.2;
+      ctx.setLineDash([9, 6]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (s.selected) {
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+        ctx.lineWidth = 1;
+        for (const w of s.pts) {
+          const p = cam.worldToScreen(w.x, w.y);
+          ctx.beginPath();
+          ctx.rect(p.x - 3, p.y - 3, 6, 6);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
   /** Sparse wide labels for named sectors and clusters. */
   private drawRegionLabels(
     ctx: CanvasRenderingContext2D,
@@ -412,7 +483,9 @@ export class Renderer {
       const op = clamp((fontPx - 4) / 6, 0, 1) * 0.75;
       ctx.fillStyle = withAlpha(r.color ?? '#c9d6f2', op);
       ctx.fillText(r.name, p.x, p.y);
-      if (r.id === sel) {
+      // An outlined region already shows its selection as a highlighted
+      // boundary; only a bare label needs a box drawn round the text.
+      if (r.id === sel && !r.shape) {
         const wdt = ctx.measureText(r.name).width;
         ctx.strokeStyle = 'rgba(255,255,255,0.8)';
         ctx.lineWidth = 1;
@@ -589,6 +662,25 @@ export class Renderer {
     ctx.setLineDash([]);
   }
 
+  /** Freehand selection loop; the closing edge is implied and drawn faint. */
+  private drawLasso(
+    ctx: CanvasRenderingContext2D,
+    pts: readonly { x: number; y: number }[]
+  ) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(90,124,255,0.12)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(150,180,255,0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.setLineDash([5, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   /** Small icon badges below a system's name card for each of its markers. */
   private drawMarkers(
     ctx: CanvasRenderingContext2D,
@@ -621,8 +713,14 @@ export class Renderer {
         ctx.beginPath();
         ctx.arc(x, y, badgeR, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.fillStyle = mk.color;
-        ctx.fillText(mk.glyph, x, y + 0.5);
+        if (mk.icon) {
+          // Gates get the same vector icon as the matching special object, so
+          // the two notations agree and neither blurs in a large export.
+          drawObjectIcon(ctx, mk.icon, x, y, badgeR * 0.68, mk.color);
+        } else {
+          ctx.fillStyle = mk.color;
+          ctx.fillText(mk.glyph, x, y + 0.5);
+        }
       }
     }
     ctx.globalAlpha = 1;

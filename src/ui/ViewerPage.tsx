@@ -9,6 +9,10 @@ import { ViewerCard } from './ViewerCard';
  * A published map as its audience sees it: the map, full bleed. No tools, no
  * panels — a title in the corner, and a card only when they click something.
  */
+/** True on a device without a mouse — changes only what the hint says. */
+const touch =
+  typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches;
+
 export function ViewerPage({ slug, token }: { slug: string; token: string }) {
   const [meta, setMeta] = useState<{ title: string; owner: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +64,9 @@ export function ViewerPage({ slug, token }: { slug: string; token: string }) {
         {meta && <span>by {meta.owner}</span>}
       </div>
       <div className="viewer-hint">
-        Drag to pan · wheel to zoom · click anything to read about it
+        {touch
+          ? 'Drag to pan · pinch to zoom · tap anything to read about it'
+          : 'Drag to pan · wheel to zoom · click anything to read about it'}
       </div>
       <ViewerCard onClose={clearSelection} />
     </div>
