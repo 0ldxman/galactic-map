@@ -6,7 +6,12 @@ import { Renderer, Marquee } from '../render/renderer';
 import { makeClip, parseClip, Clip } from '../model/clipboard';
 import { useSync, sendCursor } from '../net/sync';
 import { pointInPolygon, polygonCentroid, polygonBounds, thinPath } from '../util/geom';
-import { hitCorner, onImageReady } from '../render/references';
+import {
+  hitHandle,
+  resizeRect,
+  HANDLE_CURSORS,
+  onImageReady,
+} from '../render/references';
 import { imageFilesFrom } from '../persistence/images';
 import { addImageFiles } from './addImage';
 
@@ -636,7 +641,7 @@ export function MapCanvas() {
             ? state.map.references[state.selectedEntity.id]
             : null;
         if (pickedRef && !pickedRef.locked) {
-          const corner = hitCorner(pickedRef, x, y, cam);
+          const corner = hitHandle(pickedRef, x, y, cam);
           if (corner >= 0) {
             drag.mode = 'ref-resize';
             drag.ent = { c: 'references', id: pickedRef.id };
@@ -936,6 +941,17 @@ export function MapCanvas() {
       dirtyRef.current = true;
     }
 
+    // Hovering a reference's grips: the cursor shape is what says whether this
+    // one scales the picture or stretches a single side.
+    if (drag.mode === 'none' && canvasRef.current) {
+      const picked =
+        state.selectedEntity?.c === 'references'
+          ? state.map.references[state.selectedEntity.id]
+          : null;
+      const g = picked && !picked.locked ? hitHandle(picked, x, y, cam) : -1;
+      canvasRef.current.style.cursor = g >= 0 ? HANDLE_CURSORS[g] : '';
+    }
+
     if (drag.mode === 'pan') {
       cam.panByScreen(dx, dy);
       dirtyRef.current = true;
@@ -992,24 +1008,10 @@ export function MapCanvas() {
         state.beginTx();
         drag.tx = true;
       }
-      const r0 = drag.rect;
-      // The opposite corner stays put; the dragged one follows the pointer.
-      const fx = drag.corner === 1 || drag.corner === 2 ? r0.x : r0.x + r0.w;
-      const fy = drag.corner === 2 || drag.corner === 3 ? r0.y : r0.y + r0.h;
-      let nw = Math.abs(w.x - fx);
-      let nh = Math.abs(w.y - fy);
-      // Aspect is held unless Alt is down: a screenshot you are tracing must
-      // not be squashed by accident.
-      if (!e.altKey && r0.w > 0 && r0.h > 0) {
-        const k = Math.max(nw / r0.w, nh / r0.h);
-        nw = r0.w * k;
-        nh = r0.h * k;
-      }
-      nw = Math.max(4, nw);
-      nh = Math.max(4, nh);
-      const nx = drag.corner === 1 || drag.corner === 2 ? fx : fx - nw;
-      const ny = drag.corner === 2 || drag.corner === 3 ? fy : fy - nh;
-      state.updateEnt('references', drag.ent.id, { x: nx, y: ny, w: nw, h: nh });
+      // Alt frees the proportions on a corner; a side handle is already a
+      // one-axis stretch, so it ignores the modifier.
+      const next = resizeRect(drag.rect, drag.corner, w.x, w.y, e.altKey);
+      state.updateEnt('references', drag.ent.id, next);
     } else if (drag.mode === 'draw' && draftRef.current) {
       const d = draftRef.current;
       d.points[d.points.length - 1] = { x: w.x, y: w.y };

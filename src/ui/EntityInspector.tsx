@@ -287,6 +287,34 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
           />
           <span>Include in exported images</span>
         </label>
+        {/* Numbers, because correcting a perspective usually means "make it
+            exactly this much taller" rather than nudging a handle. */}
+        <div className="btn-row">
+          <label className="opt">
+            <span>W</span>
+            <input
+              type="number"
+              step={1}
+              value={Math.round(r.w)}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (v >= 4) updateEnt('references', r.id, { w: v });
+              }}
+            />
+          </label>
+          <label className="opt">
+            <span>H</span>
+            <input
+              type="number"
+              step={1}
+              value={Math.round(r.h)}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (v >= 4) updateEnt('references', r.id, { h: v });
+              }}
+            />
+          </label>
+        </div>
         <div className="btn-row">
           <button
             className="mini-btn"
@@ -310,10 +338,11 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
           </button>
         </div>
         <div className="panel-note">
-          {Math.round(r.w)} × {Math.round(r.h)} on the map ·{' '}
-          {Math.round(r.src.length / 1024)} KB in the file. Drag a corner to
-          scale (Alt to stretch), then lock it and draw on top. A guest reading
-          the published map never sees it.
+          {Math.round(r.src.length / 1024)} KB in the file. A corner scales the
+          whole picture (Alt frees the proportions); a <b>side handle stretches
+          that one axis</b>, which is what a game screenshot usually needs —
+          its galaxy is drawn in perspective. Then lock it and draw on top. A
+          guest reading the published map never sees it.
         </div>
       </div>
     );

@@ -100,9 +100,15 @@ export function drawReferences(
   ctx.fillStyle = '#ffffff';
   ctx.strokeStyle = 'rgba(0,0,0,0.6)';
   ctx.lineWidth = 1;
-  for (const [cx, cy] of cornerPoints(p.x, p.y, w, h)) {
+  const pts = handlePoints(p.x, p.y, w, h);
+  for (let i = 0; i < pts.length; i++) {
+    const [cx, cy] = pts[i];
+    // Corners are square, edge grips are flattened along the edge they own —
+    // the shape is the affordance: this one only moves that side.
+    const bw = i < 4 ? HANDLE : i === 5 || i === 7 ? HANDLE * 0.55 : HANDLE * 1.5;
+    const bh = i < 4 ? HANDLE : i === 4 || i === 6 ? HANDLE * 0.55 : HANDLE * 1.5;
     ctx.beginPath();
-    ctx.rect(cx - HANDLE / 2, cy - HANDLE / 2, HANDLE, HANDLE);
+    ctx.rect(cx - bw / 2, cy - bh / 2, bw, bh);
     ctx.fill();
     ctx.stroke();
   }
@@ -111,8 +117,15 @@ export function drawReferences(
 /** Half-width of a corner grab handle, in screen px. */
 export const HANDLE = 9;
 
-/** The four corners in a fixed order: TL, TR, BR, BL. */
-export function cornerPoints(
+/**
+ * The eight grab points, in a fixed order the resize maths depends on:
+ * 0–3 corners TL, TR, BR, BL — then 4–7 edges top, right, bottom, left.
+ *
+ * The edges are what a game screenshot usually needs: the galaxy is drawn in
+ * perspective, so squaring it up means stretching one axis alone rather than
+ * scaling the picture.
+ */
+export function handlePoints(
   x: number,
   y: number,
   w: number,
@@ -123,23 +136,100 @@ export function cornerPoints(
     [x + w, y],
     [x + w, y + h],
     [x, y + h],
+    [x + w / 2, y],
+    [x + w, y + h / 2],
+    [x + w / 2, y + h],
+    [x, y + h / 2],
   ];
 }
 
-/** Which corner handle is under (sx, sy), or -1. */
-export function hitCorner(
+/** True for the four indices that move one side only. */
+export function isEdgeHandle(i: number) {
+  return i >= 4;
+}
+
+/** The mouse cursor a handle should show. */
+export const HANDLE_CURSORS = [
+  'nwse-resize', 'nesw-resize', 'nwse-resize', 'nesw-resize',
+  'ns-resize', 'ew-resize', 'ns-resize', 'ew-resize',
+];
+
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Nothing may be dragged smaller than this, in world units. */
+const MIN_SIDE = 4;
+
+/**
+ * The rectangle that results from dragging handle `g` of `r0` to the world
+ * point (wx, wy).
+ *
+ * A corner scales the picture, holding its proportions unless `freeAspect`;
+ * a side moves that one edge and nails the opposite one down, which is how a
+ * screenshot drawn in perspective gets squared up. Either way the geometry the
+ * author is not touching stays exactly where it was.
+ */
+export function resizeRect(
+  r0: Rect,
+  g: number,
+  wx: number,
+  wy: number,
+  freeAspect = false
+): Rect {
+  let { x, y, w, h } = r0;
+
+  if (isEdgeHandle(g)) {
+    if (g === 4) {
+      h = Math.max(MIN_SIDE, r0.y + r0.h - wy);
+      y = r0.y + r0.h - h;
+    } else if (g === 6) {
+      h = Math.max(MIN_SIDE, wy - r0.y);
+    } else if (g === 5) {
+      w = Math.max(MIN_SIDE, wx - r0.x);
+    } else {
+      w = Math.max(MIN_SIDE, r0.x + r0.w - wx);
+      x = r0.x + r0.w - w;
+    }
+    return { x, y, w, h };
+  }
+
+  // The opposite corner stays put; the dragged one follows the pointer.
+  const fx = g === 1 || g === 2 ? r0.x : r0.x + r0.w;
+  const fy = g === 2 || g === 3 ? r0.y : r0.y + r0.h;
+  w = Math.abs(wx - fx);
+  h = Math.abs(wy - fy);
+  if (!freeAspect && r0.w > 0 && r0.h > 0) {
+    const k = Math.max(w / r0.w, h / r0.h);
+    w = r0.w * k;
+    h = r0.h * k;
+  }
+  w = Math.max(MIN_SIDE, w);
+  h = Math.max(MIN_SIDE, h);
+  x = g === 1 || g === 2 ? fx : fx - w;
+  y = g === 2 || g === 3 ? fy : fy - h;
+  return { x, y, w, h };
+}
+
+/**
+ * Which handle is under (sx, sy), or -1. Corners are tested first: they sit at
+ * the ends of the edges, and when the two overlap the corner is what a person
+ * aiming at the very end of a side meant.
+ */
+export function hitHandle(
   r: RefImage,
   sx: number,
   sy: number,
   cam: Camera
 ): number {
   const p = cam.worldToScreen(r.x, r.y);
-  const corners = cornerPoints(p.x, p.y, r.w * cam.zoom, r.h * cam.zoom);
-  for (let i = 0; i < corners.length; i++) {
-    if (
-      Math.abs(sx - corners[i][0]) <= HANDLE &&
-      Math.abs(sy - corners[i][1]) <= HANDLE
-    ) {
+  const pts = handlePoints(p.x, p.y, r.w * cam.zoom, r.h * cam.zoom);
+  for (let i = 0; i < pts.length; i++) {
+    const tol = i < 4 ? HANDLE : HANDLE * 0.8;
+    if (Math.abs(sx - pts[i][0]) <= tol && Math.abs(sy - pts[i][1]) <= tol) {
       return i;
     }
   }

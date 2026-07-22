@@ -208,9 +208,14 @@ the game, a sketch, an older export.
 - **Getting one in**: drop it on the canvas, paste it, or Outliner ▸
   References ▸ Add image. It lands centred under the cursor, spanning most of
   the view, at 60% opacity — you are about to draw on top of it.
-- **Adjusting one**: drag to move, drag a corner to scale (aspect held unless
-  Alt), then **lock** it and it stops being pickable at all, which is the
+- **Adjusting one**: drag to move; **eight grips** — a corner scales the whole
+  picture (aspect held unless Alt), a **side stretches that one axis**, which
+  is what a game screenshot usually needs, since its galaxy is drawn in
+  perspective and has to be squared up. W/H are also typeable in the
+  inspector. Then **lock** it and it stops being pickable at all, which is the
   point — you can paint systems over it without nudging it.
+  - The maths lives in `resizeRect`, a pure function, precisely so the eight
+    cases and their sign handling could be tested instead of guessed at.
   - Neither a reference nor a nebula may intercept a *drag*: both cover large
     areas, and stealing empty-space drags would make box select impossible.
     They are picked up by a click that went nowhere, and a reference's interior
