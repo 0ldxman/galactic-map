@@ -171,6 +171,24 @@ Everything here came from using the thing rather than from the plan.
 Fixed on the way through: the rubber-band rectangle was never updated during
 the drag, so box select had always measured 0×0 and selected nothing.
 
+### Outliner, second try
+
+Stacking five scrolling lists into one column meant everything past the first
+was below the fold — including the button that makes a new empire, which was
+sitting under a dozen empire rows where nobody would ever find it.
+
+- The tab is now the map's **table of contents**: one card per category with
+  its count and its visibility eye. The list itself opens in a dialog, which
+  has room for the rows *and* a fixed place for "+ New" and the filter.
+- **Making an empire has three doors now**, because being unable to is worse
+  than a duplicated button: `+` beside the empire picker on the tool strip
+  (where you are when you want one), the Properties panel, and the dialog.
+- **Colour picking is ours, not the browser's.** A native `<input type=color>`
+  anchors its dialog to the input and runs off the right edge of the screen —
+  and the panel is at that edge. `ColorSwatch` opens a palette popover placed
+  by us and clamped to the viewport, with a hex field; the OS picker is still
+  there one click further in, where it opens from the middle of the screen.
+
 ## Phase E — later
 
 - **Planets** — `System.bodies: Planet[]`, shown in a separate System View

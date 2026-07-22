@@ -176,25 +176,6 @@ html, body, #root {
   font-size: 12px;
   flex: 0 0 auto;
 }
-.out-section {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.out-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; }
-.out-toggle {
-  flex: 1;
-  text-align: left;
-  background: none;
-  border: none;
-  color: var(--text);
-  font-weight: 600;
-  font-size: 12px;
-  cursor: pointer;
-  padding: 0;
-}
-.out-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .eye { background: none; border: none; cursor: pointer; font-size: 12px; opacity: 0.9; padding: 0 2px; }
 .eye.off { opacity: 0.3; }
 .out-list { display: flex; flex-direction: column; gap: 3px; padding: 0 8px 8px; }
@@ -214,20 +195,8 @@ html, body, #root {
 }
 .out-row:hover { border-color: #3a4062; }
 .out-row.active { border-color: var(--accent); background: #1b2140; }
-.out-row input[type='color'] { width: 18px; height: 18px; flex: 0 0 18px; padding: 0; border: none; background: none; }
 .out-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .out-sub { color: var(--muted); font-size: 11px; }
-.out-input {
-  flex: 1;
-  min-width: 0;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  color: var(--text);
-  font-size: 12px;
-  padding: 1px 4px;
-}
-.out-input:focus { background: #0b0d18; border-color: var(--accent); outline: none; }
 
 /* Toolbar — vertical rail on the left, Photoshop-style */
 .toolbar {
@@ -863,27 +832,6 @@ html, body, #root {
   background: var(--bg);
 }
 
-/* ---- Outliner: the active empire's second line ---- */
-.out-empire { display: flex; flex-direction: column; gap: 3px; }
-.out-detail {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px 6px 30px;
-  font-size: 11px;
-  color: var(--muted);
-}
-.out-detail input[type='color'] {
-  width: 22px;
-  height: 18px;
-  flex: 0 0 22px;
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
-}
-.out-row .chip-x { flex: 0 0 auto; }
-
 /* ---- Viewer card details ---- */
 .v-owner { display: inline-flex; align-items: center; gap: 6px; }
 .v-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 2px; }
@@ -985,4 +933,154 @@ html, body, #root {
 
   .modal, .help-modal { width: calc(100% - 20px); max-height: 88vh; }
   .auth-card { width: calc(100% - 28px); }
+}
+
+/* ---- Colour swatch + its popover ---- */
+.swatch-btn {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  padding: 0;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.swatch-btn:hover { border-color: #fff; }
+.swatch-btn:disabled { opacity: 0.5; cursor: default; }
+.swatch-pop {
+  position: fixed;
+  z-index: 100;
+  padding: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: 0 14px 40px rgba(0,0,0,0.55);
+}
+.swatch-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.swatch-cell {
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.swatch-cell:hover { border-color: #fff; }
+.swatch-cell.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+.swatch-foot { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+.swatch-hex {
+  flex: 1;
+  min-width: 0;
+  background: #0f1120;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 4px 7px;
+  font-family: inherit;
+  font-size: 12px;
+}
+.swatch-hex:focus { border-color: var(--accent); outline: none; }
+.swatch-foot input[type='color'] {
+  width: 26px;
+  height: 24px;
+  flex: 0 0 26px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+/* ---- Outliner: category cards ---- */
+.cat-grid { display: flex; flex-direction: column; gap: 6px; padding: 10px; }
+.cat-card {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding-right: 8px;
+}
+.cat-card:hover { border-color: #3a4062; }
+.cat-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cat-icon { font-size: 16px; color: #aeb8ff; width: 18px; text-align: center; }
+.cat-label { flex: 1; min-width: 0; }
+.cat-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+/* ---- Outliner dialog ---- */
+.ol-modal { width: min(620px, calc(100% - 32px)); max-width: none; }
+.ol-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.ol-head h2 { display: flex; align-items: center; gap: 8px; margin: 0; flex: 1; }
+.ol-icon { color: #aeb8ff; }
+.ol-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.ol-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  margin: 8px 0 4px;
+}
+.ol-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.ol-row:hover { border-color: #3a4062; }
+.ol-row.active { border-color: var(--accent); background: #1b2140; }
+.ol-name {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  padding: 3px 6px;
+}
+.ol-name:hover:not(:disabled) { border-color: var(--border); }
+.ol-name:focus { background: #0b0d18; border-color: var(--accent); outline: none; }
+.ol-name:disabled { color: var(--text); }
+.ol-sub {
+  color: var(--muted);
+  font-size: 11px;
+  flex: 0 0 auto;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ol-row .mini-btn { padding: 3px 7px; }
+
+@media (max-width: 700px) {
+  .ol-modal { width: calc(100% - 20px); }
+  .ol-row { flex-wrap: wrap; }
+  .ol-name { flex: 1 0 60%; }
 }

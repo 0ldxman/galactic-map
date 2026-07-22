@@ -12,6 +12,7 @@ import { STAR_SIZES, normalizeStars, makeStarBody } from '../model/stars';
 import { EntityInspector } from './EntityInspector';
 import { Notes } from './Notes';
 import { lighten } from '../util/color';
+import { ColorSwatch } from './ColorSwatch';
 
 const BODY_TYPES: StarType[] = ['yellow', 'red', 'blue', 'white', 'neutron'];
 
@@ -27,6 +28,7 @@ export function Inspector() {
   const removeSystem = useEditor((s) => s.removeSystem);
   const removeSystems = useEditor((s) => s.removeSystems);
   const updateEmpire = useEditor((s) => s.updateEmpire);
+  const addEmpire = useEditor((s) => s.addEmpire);
   const toggleMarkerMany = useEditor((s) => s.toggleMarkerMany);
 
   if (selectedEntity && map[selectedEntity.c][selectedEntity.id]) {
@@ -51,6 +53,9 @@ export function Inspector() {
           <div className="empty-hint">
             Click a system, or drag a box over empty space to select several.
           </div>
+          <button className="mini-btn" onClick={() => addEmpire()}>
+            + Add an empire
+          </button>
         </div>
       );
     }
@@ -67,22 +72,29 @@ export function Inspector() {
           />
         </label>
         <div className="btn-row">
-          <label className="opt">
+          <div className="opt">
             <span>Fill</span>
-            <input
-              type="color"
+            <ColorSwatch
               value={emp.color}
-              onChange={(e) => updateEmpire(emp.id, { color: e.target.value })}
+              onChange={(hex) => updateEmpire(emp.id, { color: hex })}
             />
-          </label>
-          <label className="opt">
+          </div>
+          <div className="opt">
             <span>Border</span>
-            <input
-              type="color"
+            <ColorSwatch
               value={emp.borderColor ?? lighten(emp.color)}
-              onChange={(e) => updateEmpire(emp.id, { borderColor: e.target.value })}
+              onChange={(hex) => updateEmpire(emp.id, { borderColor: hex })}
             />
-          </label>
+          </div>
+          {emp.borderColor && (
+            <button
+              className="mini-btn"
+              title="Derive the border from the fill again"
+              onClick={() => updateEmpire(emp.id, { borderColor: undefined })}
+            >
+              Auto
+            </button>
+          )}
         </div>
         <div className="kv" style={{ marginTop: 6 }}>
           <span>Systems</span>
@@ -99,8 +111,14 @@ export function Inspector() {
           onChange={(v) => updateEmpire(emp.id, { notes: v })}
           label="Lore"
         />
+        <div className="btn-row" style={{ marginTop: 8 }}>
+          <button className="mini-btn" onClick={() => addEmpire()}>
+            + Add an empire
+          </button>
+        </div>
         <div className="panel-note">
-          Pick a different empire in the Outliner. Click a system to edit it here.
+          Pick a different empire in Outliner ▸ Empires, or from the strip above
+          the map. Click a system to edit it here.
         </div>
       </div>
     );

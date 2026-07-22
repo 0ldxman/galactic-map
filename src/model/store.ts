@@ -18,6 +18,7 @@ import { DisplaySettings, resolveDisplay } from './display';
 import { Op, EntColl, EntMap, applyOps, compressOps, invertOps, prevOf } from './ops';
 import { Clip } from './clipboard';
 import { OBJECT_BY_ID } from './objects';
+import { EMPIRE_PALETTE, NEBULA_PALETTE } from './palette';
 import { makeId, Rng } from '../util/rng';
 import { systemName } from '../generation/names';
 import { makeStarCluster } from './stars';
@@ -183,16 +184,6 @@ export interface EditorState {
   // --- display ---
   setDisplay: (patch: Partial<DisplaySettings>) => void;
 }
-
-const NEBULA_PALETTE = [
-  '#7a4bd6', '#c2416b', '#2f8fb8', '#b8632f', '#3fa06a',
-  '#8f3fa0', '#3f5fa0', '#a0863f',
-];
-
-const EMPIRE_PALETTE = [
-  '#e0483d', '#3d8ee0', '#49c26b', '#e0b23d', '#a34fe0',
-  '#e0733d', '#3dd6c2', '#e03d94', '#7ac23d', '#5a5fe0',
-];
 
 /** Ops accumulated by the open transaction, if any (see beginTx/endTx). */
 let txOps: Op[] | null = null;

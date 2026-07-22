@@ -3,6 +3,7 @@ import { AnnotationKind, ObjectKind } from '../model/types';
 import { OBJECT_TYPES, OBJECT_BY_ID } from '../model/objects';
 import { pointInPolygon } from '../util/geom';
 import { Notes } from './Notes';
+import { ColorSwatch } from './ColorSwatch';
 
 const TITLES: Record<EntityRef['c'], string> = {
   nebulae: 'Nebula',
@@ -48,14 +49,13 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
             onChange={(e) => updateEnt('nebulae', n.id, { name: e.target.value })}
           />
         </label>
-        <label className="field">
+        <div className="field">
           <span>Colour</span>
-          <input
-            type="color"
+          <ColorSwatch
             value={n.color}
-            onChange={(e) => updateEnt('nebulae', n.id, { color: e.target.value })}
+            onChange={(hex) => updateEnt('nebulae', n.id, { color: hex })}
           />
-        </label>
+        </div>
         <label className="field">
           <span>Opacity: {n.opacity.toFixed(2)}</span>
           <input
@@ -213,14 +213,13 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
             }
           />
         </label>
-        <label className="field">
+        <div className="field">
           <span>Colour</span>
-          <input
-            type="color"
+          <ColorSwatch
             value={r.color ?? '#c9d6f2'}
-            onChange={(e) => updateEnt('regions', r.id, { color: e.target.value })}
+            onChange={(hex) => updateEnt('regions', r.id, { color: hex })}
           />
-        </label>
+        </div>
         <Notes
           value={r.notes}
           onChange={(v) => updateEnt('regions', r.id, { notes: v })}
@@ -265,14 +264,13 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
             ))}
           </select>
         </label>
-        <label className="field">
+        <div className="field">
           <span>Colour</span>
-          <input
-            type="color"
+          <ColorSwatch
             value={o.color ?? type?.color ?? '#cfd8ff'}
-            onChange={(e) => updateEnt('objects', o.id, { color: e.target.value })}
+            onChange={(hex) => updateEnt('objects', o.id, { color: hex })}
           />
-        </label>
+        </div>
 
         {/* Only passages lead somewhere. A debris field has no far end, so it
             isn't offered one. */}
@@ -405,16 +403,13 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
           />
         </label>
       )}
-      <label className="field">
+      <div className="field">
         <span>Colour</span>
-        <input
-          type="color"
+        <ColorSwatch
           value={a.color}
-          onChange={(e) =>
-            updateEnt('annotations', a.id, { color: e.target.value })
-          }
+          onChange={(hex) => updateEnt('annotations', a.id, { color: hex })}
         />
-      </label>
+      </div>
       <label className="toggle-row">
         <input
           type="checkbox"

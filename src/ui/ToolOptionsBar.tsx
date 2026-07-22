@@ -30,6 +30,7 @@ export function ToolOptionsBar() {
   const activeEmpireId = useEditor((s) => s.activeEmpireId);
   const setActiveEmpire = useEditor((s) => s.setActiveEmpire);
   const addNebula = useEditor((s) => s.addNebula);
+  const addEmpire = useEditor((s) => s.addEmpire);
   const removeEnt = useEditor((s) => s.removeEnt);
   const updateEnt = useEditor((s) => s.updateEnt);
   const selection = useEditor((s) => s.selection);
@@ -56,6 +57,15 @@ export function ToolOptionsBar() {
           style={{ background: map.empires[activeEmpireId].color }}
         />
       )}
+      {/* Making an empire is what you do right before painting one, so the
+          button belongs next to the picker rather than only in a dialog. */}
+      <button
+        className="mini-btn"
+        title="Create an empire and make it the active one"
+        onClick={() => addEmpire()}
+      >
+        +
+      </button>
     </label>
   );
 
