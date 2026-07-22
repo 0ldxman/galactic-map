@@ -120,5 +120,6 @@ export function generateGalaxy(params: GenerateParams): GalaxyMap {
     regions: {},
     objects: {},
     annotations: {},
+    references: {},
   };
 }

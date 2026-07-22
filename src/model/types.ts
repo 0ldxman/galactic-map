@@ -184,6 +184,37 @@ export interface Annotation {
   filled?: boolean;
 }
 
+/**
+ * A picture pinned to the map to trace over — a screenshot of the galaxy from
+ * the game, a hand-drawn sketch, an old export. Scaffolding, not content: it is
+ * drawn only while editing, never for a guest reading the published map, and
+ * only goes into an exported image if you ask for it.
+ *
+ * The bitmap travels inside the map as a data URI so it survives a reload,
+ * reaches co-editors and rides along in the JSON export with no extra
+ * plumbing. That is only affordable because the importer downscales and
+ * re-encodes first — see persistence/images.ts.
+ */
+export interface RefImage {
+  id: ID;
+  name: string;
+  /** the picture itself, as a data URI */
+  src: string;
+  /** top-left corner, world coordinates */
+  x: number;
+  y: number;
+  /** size in world units (the aspect ratio is the author's to break) */
+  w: number;
+  h: number;
+  opacity: number;
+  /** pinned down: not pickable on the canvas, so you can draw over it freely */
+  locked?: boolean;
+  /** under the whole map, or over the territories but under the stars */
+  layer?: 'below' | 'above';
+  /** include it in a PNG export (off by default) */
+  exported?: boolean;
+}
+
 export interface GalaxyMap {
   version: number;
   seed: number;
@@ -196,9 +227,11 @@ export interface GalaxyMap {
   regions: Record<ID, MapRegion>;
   objects: Record<ID, SpaceObject>;
   annotations: Record<ID, Annotation>;
+  /** Tracing references. Absent on maps made before v3. */
+  references: Record<ID, RefImage>;
 }
 
-export const MAP_VERSION = 2;
+export const MAP_VERSION = 3;
 
 export function emptyMap(seed = 0): GalaxyMap {
   return {
@@ -212,6 +245,7 @@ export function emptyMap(seed = 0): GalaxyMap {
     regions: {},
     objects: {},
     annotations: {},
+    references: {},
   };
 }
 

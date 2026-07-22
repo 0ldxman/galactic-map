@@ -6,6 +6,9 @@ import { Renderer, Marquee } from '../render/renderer';
 import { makeClip, parseClip, Clip } from '../model/clipboard';
 import { useSync, sendCursor } from '../net/sync';
 import { pointInPolygon, polygonCentroid, polygonBounds, thinPath } from '../util/geom';
+import { hitCorner, onImageReady } from '../render/references';
+import { imageFilesFrom } from '../persistence/images';
+import { addImageFiles } from './addImage';
 
 const HIT_RADIUS = 11; // screen px
 const LINE_HIT = 7; // screen px for hyperlane picking
@@ -54,7 +57,8 @@ interface DragState {
     | 'ent-vertex'
     | 'draw'
     | 'brush'
-    | 'region';
+    | 'region'
+    | 'ref-resize';
   /** world position of the pointer when a move-drag started */
   originX: number;
   originY: number;
@@ -78,6 +82,9 @@ interface DragState {
   erasing: boolean;
   /** true when this gesture came from a finger rather than a mouse */
   touch: boolean;
+  /** corner being dragged while resizing a reference image, and its start rect */
+  corner: number;
+  rect: { x: number; y: number; w: number; h: number };
 }
 
 /** Last clipboard payload, used when the OS clipboard is unavailable. */
@@ -113,6 +120,8 @@ export function MapCanvas() {
     dabY: 0,
     erasing: false,
     touch: false,
+    corner: -1,
+    rect: { x: 0, y: 0, w: 0, h: 0 },
   });
   const didFit = useRef(false);
 
@@ -125,7 +134,14 @@ export function MapCanvas() {
     document.fonts?.ready.then(() => {
       dirtyRef.current = true;
     });
-    return unsub;
+    // Reference bitmaps decode asynchronously and have no other way in.
+    const unref = onImageReady(() => {
+      dirtyRef.current = true;
+    });
+    return () => {
+      unsub();
+      unref();
+    };
   }, []);
 
   // Render loop + resize handling.
@@ -205,6 +221,7 @@ export function MapCanvas() {
           draftAnnotation: draftRef.current,
           // Only editors have pointers worth showing, and a viewer sees the
           // map alone — no one else's cursor either.
+          references: st.readOnly ? false : undefined,
           peers: st.readOnly
             ? []
             : peers.filter(
@@ -308,8 +325,28 @@ export function MapCanvas() {
         st.insertClip(clip, clip.cx + off, clip.cy + off);
       }
     };
+    // Pasting a picture is the fastest way to get a screenshot in, and it is a
+    // different event from the Ctrl+V above, which deals in map fragments.
+    const onPaste = (e: ClipboardEvent) => {
+      if (editable(e.target)) return;
+      const st = useEditor.getState();
+      if (st.readOnly) return;
+      const files = imageFilesFrom(e.clipboardData);
+      if (files.length === 0) return;
+      e.preventDefault();
+      const c = cursorRef.current;
+      const at = c.inside
+        ? camRef.current.screenToWorld(c.x, c.y)
+        : undefined;
+      addImageFiles(files, at);
+    };
+
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('paste', onPaste);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('paste', onPaste);
+    };
   }, []);
 
   // ---- hit testing ---------------------------------------------------------
@@ -417,6 +454,26 @@ export function MapCanvas() {
       }
     }
     return best ? { id: best, vertex: -1 } : null;
+  };
+
+  /**
+   * The topmost unlocked reference under this point. Locked ones are invisible
+   * to the pointer on purpose — that is what locking is for: once a screenshot
+   * is lined up you want to draw over it without nudging it.
+   */
+  const hitTestReference = (sx: number, sy: number): ID | null => {
+    const cam = camRef.current;
+    const { map } = useEditor.getState();
+    const w = cam.screenToWorld(sx, sy);
+    const list = Object.values(map.references ?? {});
+    for (let i = list.length - 1; i >= 0; i--) {
+      const r = list[i];
+      if (r.locked) continue;
+      if (w.x >= r.x && w.x <= r.x + r.w && w.y >= r.y && w.y <= r.y + r.h) {
+        return r.id;
+      }
+    }
+    return null;
   };
 
   /** The nebula whose gas covers this point, if any. */
@@ -572,6 +629,28 @@ export function MapCanvas() {
 
     switch (state.tool) {
       case 'select': {
+        // A grab handle on the picked reference beats everything: it is a
+        // deliberate 9px target the author just aimed at.
+        const pickedRef =
+          state.selectedEntity?.c === 'references'
+            ? state.map.references[state.selectedEntity.id]
+            : null;
+        if (pickedRef && !pickedRef.locked) {
+          const corner = hitCorner(pickedRef, x, y, cam);
+          if (corner >= 0) {
+            drag.mode = 'ref-resize';
+            drag.ent = { c: 'references', id: pickedRef.id };
+            drag.corner = corner;
+            drag.rect = {
+              x: pickedRef.x,
+              y: pickedRef.y,
+              w: pickedRef.w,
+              h: pickedRef.h,
+            };
+            break;
+          }
+        }
+
         const selEntId =
           state.selectedEntity?.c === 'annotations'
             ? state.selectedEntity.id
@@ -639,6 +718,25 @@ export function MapCanvas() {
           drag.originY = w.y;
           break;
         }
+        // Dragging inside the *picked* reference moves it. Only the picked
+        // one, because a screenshot can cover the entire working area and
+        // grabbing it on every empty-space drag would make box select
+        // impossible. Picking one is a plain click, resolved on release.
+        if (
+          pickedRef &&
+          !pickedRef.locked &&
+          w.x >= pickedRef.x &&
+          w.x <= pickedRef.x + pickedRef.w &&
+          w.y >= pickedRef.y &&
+          w.y <= pickedRef.y + pickedRef.h
+        ) {
+          drag.mode = 'ent-move';
+          drag.ent = { c: 'references', id: pickedRef.id };
+          drag.originX = w.x;
+          drag.originY = w.y;
+          break;
+        }
+
         if (!additive) state.clearSelection();
         // On a phone a one-finger drag over empty space is panning — the
         // rubber band needs a mouse, or a second finger to zoom out first.
@@ -889,6 +987,29 @@ export function MapCanvas() {
           state.updateEnt('regions', r.id, { shape, x: c.x, y: c.y });
         }
       }
+    } else if (drag.mode === 'ref-resize' && drag.ent) {
+      if (!drag.tx) {
+        state.beginTx();
+        drag.tx = true;
+      }
+      const r0 = drag.rect;
+      // The opposite corner stays put; the dragged one follows the pointer.
+      const fx = drag.corner === 1 || drag.corner === 2 ? r0.x : r0.x + r0.w;
+      const fy = drag.corner === 2 || drag.corner === 3 ? r0.y : r0.y + r0.h;
+      let nw = Math.abs(w.x - fx);
+      let nh = Math.abs(w.y - fy);
+      // Aspect is held unless Alt is down: a screenshot you are tracing must
+      // not be squashed by accident.
+      if (!e.altKey && r0.w > 0 && r0.h > 0) {
+        const k = Math.max(nw / r0.w, nh / r0.h);
+        nw = r0.w * k;
+        nh = r0.h * k;
+      }
+      nw = Math.max(4, nw);
+      nh = Math.max(4, nh);
+      const nx = drag.corner === 1 || drag.corner === 2 ? fx : fx - nw;
+      const ny = drag.corner === 2 || drag.corner === 3 ? fy : fy - nh;
+      state.updateEnt('references', drag.ent.id, { x: nx, y: ny, w: nw, h: nh });
     } else if (drag.mode === 'draw' && draftRef.current) {
       const d = draftRef.current;
       d.points[d.points.length - 1] = { x: w.x, y: w.y };
@@ -953,6 +1074,10 @@ export function MapCanvas() {
       if (!o) return;
       // Dragging an object away from its system detaches it.
       state.updateEnt('objects', ref.id, { x: o.x + dx, y: o.y + dy });
+    } else if (ref.c === 'references') {
+      const r = state.map.references[ref.id];
+      if (!r || r.locked) return;
+      state.updateEnt('references', ref.id, { x: r.x + dx, y: r.y + dy });
     } else if (ref.c === 'regions') {
       const r = state.map.regions[ref.id];
       if (!r) return;
@@ -1018,10 +1143,7 @@ export function MapCanvas() {
         }
         commitSelection(inside, additive);
       } else {
-        // A plain click on empty space: the only way to grab a nebula, which
-        // has no outline of its own to aim at.
-        const neb = hitTestNebula(x, y);
-        if (neb) state.selectEntity({ c: 'nebulae', id: neb });
+        pickBackdrop(x, y);
       }
       marqueeRef.current = null;
       dirtyRef.current = true;
@@ -1037,6 +1159,8 @@ export function MapCanvas() {
           if (pointInPolygon(p.x, p.y, loop)) inside.push(s.id);
         }
         commitSelection(inside, additive);
+      } else {
+        pickBackdrop(x, y);
       }
       lassoRef.current = null;
       dirtyRef.current = true;
@@ -1071,6 +1195,12 @@ export function MapCanvas() {
       dirtyRef.current = true;
     }
 
+    // On touch an empty-space drag pans, so a tap never opens a marquee — the
+    // backdrop pick has to hang off the pan instead.
+    if (drag.mode === 'pan' && drag.touch && !drag.moved && state.tool === 'select') {
+      pickBackdrop(x, y);
+    }
+
     if (drag.collapseTo) {
       if (!drag.moved) state.selectSystem(drag.collapseTo);
       drag.collapseTo = null;
@@ -1083,8 +1213,26 @@ export function MapCanvas() {
     drag.mode = 'none';
     drag.ent = null;
     drag.vertex = -1;
+    drag.corner = -1;
     // A finished move deferred its border rebuild — redraw once to apply it.
     if (wasMoving) dirtyRef.current = true;
+  };
+
+  /**
+   * What a click on apparently empty space actually landed on: a tracing image
+   * first, then nebula gas. Both cover large areas and have no outline to aim
+   * at, so neither is allowed to intercept a drag — only a click that went
+   * nowhere gets to pick them up.
+   */
+  const pickBackdrop = (x: number, y: number) => {
+    const state = useEditor.getState();
+    const ref = hitTestReference(x, y);
+    if (ref) {
+      state.selectEntity({ c: 'references', id: ref });
+      return;
+    }
+    const neb = hitTestNebula(x, y);
+    if (neb) state.selectEntity({ c: 'nebulae', id: neb });
   };
 
   const commitSelection = (ids: string[], additive: boolean) => {
@@ -1101,8 +1249,29 @@ export function MapCanvas() {
     dirtyRef.current = true;
   };
 
+  const onDrop = (e: React.DragEvent) => {
+    const files = imageFilesFrom(e.dataTransfer);
+    if (files.length === 0) return;
+    e.preventDefault();
+    if (useEditor.getState().readOnly) return;
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const at = camRef.current.screenToWorld(
+      e.clientX - rect.left,
+      e.clientY - rect.top
+    );
+    addImageFiles(files, at);
+  };
+
   return (
-    <div className="canvas-wrap">
+    <div
+      className="canvas-wrap"
+      onDragOver={(e) => {
+        // Only claim the drop when it is actually an image, so a JSON map
+        // dropped on the window still reaches the browser's own handling.
+        if (e.dataTransfer.types.includes('Files')) e.preventDefault();
+      }}
+      onDrop={onDrop}
+    >
       <canvas
         ref={canvasRef}
         className="map-canvas"

@@ -20,11 +20,14 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
   const [maxSize, setMaxSize] = useState(4096);
   const [legend, setLegend] = useState(true);
   const [transparent, setTransparent] = useState(false);
+  const [references, setReferences] = useState(false);
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const empires = Object.values(map.empires);
+  // Tracing images are scaffolding, so the option only appears if any exist.
+  const hasRefs = Object.keys(map.references ?? {}).length > 0;
   const chosen = empires.find((e) => e.id === empireId) ?? empires[0] ?? null;
 
   const run = async () => {
@@ -45,6 +48,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
         maxSize,
         legend,
         transparent,
+        references,
         title: title.trim() || undefined,
         filename: name,
       });
@@ -126,6 +130,16 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
           />
           <span>Transparent background</span>
         </label>
+        {hasRefs && (
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={references}
+              onChange={(e) => setReferences(e.target.checked)}
+            />
+            <span>Include reference images marked for export</span>
+          </label>
+        )}
 
         {error && <div className="error-note">{error}</div>}
 

@@ -8,17 +8,24 @@ import {
   MapRegion,
   SpaceObject,
   Annotation,
+  RefImage,
 } from './types';
 import { DisplaySettings, resolveDisplay } from './display';
 
 /** Map collections that hold a plain id-keyed entity, edited through `ent.*`. */
-export type EntColl = 'nebulae' | 'regions' | 'objects' | 'annotations';
+export type EntColl =
+  | 'nebulae'
+  | 'regions'
+  | 'objects'
+  | 'annotations'
+  | 'references';
 
 export interface EntMap {
   nebulae: Nebula;
   regions: MapRegion;
   objects: SpaceObject;
   annotations: Annotation;
+  references: RefImage;
 }
 
 type EntAdd = { [C in EntColl]: { t: 'ent.add'; c: C; ent: EntMap[C] } }[EntColl];

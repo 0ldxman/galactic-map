@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useEditor } from '../model/store';
 import { EntColl } from '../model/ops';
 import { OBJECT_BY_ID } from '../model/objects';
 import { DisplaySettings, resolveDisplay } from '../model/display';
 import { lighten } from '../util/color';
 import { ColorSwatch } from './ColorSwatch';
+import { addImageFiles } from './addImage';
 
 /** The categories the outliner can open. Empires aren't an entity collection. */
 export type OutlinerCat = 'empires' | EntColl;
@@ -46,6 +47,15 @@ export const CATEGORIES: {
     empty: 'Nothing placed yet. Drop gates and wrecks with the Object tool (O).',
   },
   {
+    id: 'references',
+    label: 'References',
+    icon: '🖼',
+    vis: 'showReferences',
+    empty:
+      'No tracing images. Drop one on the map, paste one, or add a file below — ' +
+      'handy for lining systems up with a screenshot from the game.',
+  },
+  {
     id: 'annotations',
     label: 'Notes',
     icon: '✎',
@@ -83,6 +93,9 @@ export function OutlinerDialog({
   const focusOn = useEditor((s) => s.focusOn);
   const readOnly = useEditor((s) => s.readOnly);
   const [query, setQuery] = useState('');
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const meta = CATEGORIES.find((c) => c.id === cat)!;
   const display = resolveDisplay(map.display);
@@ -207,6 +220,14 @@ export function OutlinerDialog({
           y: o.y,
         };
       });
+    } else if (coll === 'references') {
+      list = Object.values(map.references).map((r) => ({
+        id: r.id,
+        name: r.name,
+        sub: `${Math.round(r.w)}×${Math.round(r.h)}${r.locked ? ' · locked' : ''}`,
+        x: r.x + r.w / 2,
+        y: r.y + r.h / 2,
+      }));
     } else {
       list = Object.values(map.annotations).map((a) => ({
         id: a.id,
@@ -228,11 +249,31 @@ export function OutlinerDialog({
           }`}
           onClick={() => selectEntity({ c: coll, id: r.id })}
         >
-          <ColorSwatch
-            value={r.color ?? '#cfd8ff'}
-            disabled={readOnly}
-            onChange={(hex) => updateEnt(coll, r.id, { color: hex } as never)}
-          />
+          {coll === 'references' ? (
+            <button
+              className="eye"
+              title={
+                map.references[r.id]?.locked
+                  ? 'Unlock so it can be moved'
+                  : 'Lock it in place'
+              }
+              disabled={readOnly}
+              onClick={(ev) => {
+                ev.stopPropagation();
+                updateEnt('references', r.id, {
+                  locked: !map.references[r.id]?.locked,
+                });
+              }}
+            >
+              {map.references[r.id]?.locked ? '🔒' : '🔓'}
+            </button>
+          ) : (
+            <ColorSwatch
+              value={r.color ?? '#cfd8ff'}
+              disabled={readOnly}
+              onChange={(hex) => updateEnt(coll, r.id, { color: hex } as never)}
+            />
+          )}
           <input
             className="ol-name"
             value={r.name}
@@ -274,7 +315,9 @@ export function OutlinerDialog({
       ? () => addEmpire()
       : cat === 'nebulae'
         ? () => addNebula()
-        : null;
+        : cat === 'references'
+          ? () => fileRef.current?.click()
+          : null;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -306,10 +349,44 @@ export function OutlinerDialog({
           {count === 0 ? <div className="empty-hint">{meta.empty}</div> : rows}
         </div>
 
+        {cat === 'references' && (
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: 'none' }}
+              onChange={async (e) => {
+                const files = Array.from(e.target.files ?? []);
+                e.target.value = '';
+                if (files.length === 0) return;
+                setBusy(true);
+                setNote(await addImageFiles(files));
+                setBusy(false);
+              }}
+            />
+            {note && <div className="panel-note">{note}</div>}
+            <div className="panel-note">
+              Images are downscaled and stored inside the map, so they survive a
+              reload and reach your co-editors — but they also make the file
+              bigger. Guests reading the published link never see them.
+            </div>
+          </>
+        )}
+
         <div className="modal-actions">
           {create && (
-            <button className="tool-btn" disabled={readOnly} onClick={create}>
-              + New {meta.label.replace(/s$/, '').toLowerCase()}
+            <button
+              className="tool-btn"
+              disabled={readOnly || busy}
+              onClick={create}
+            >
+              {cat === 'references'
+                ? busy
+                  ? 'Reading…'
+                  : '＋ Add image…'
+                : `+ New ${meta.label.replace(/s$/, '').toLowerCase()}`}
             </button>
           )}
           <button className="tool-btn primary" onClick={onClose}>

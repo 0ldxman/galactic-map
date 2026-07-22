@@ -4,12 +4,14 @@ import { OBJECT_TYPES, OBJECT_BY_ID } from '../model/objects';
 import { pointInPolygon } from '../util/geom';
 import { Notes } from './Notes';
 import { ColorSwatch } from './ColorSwatch';
+import { getImage } from '../render/references';
 
 const TITLES: Record<EntityRef['c'], string> = {
   nebulae: 'Nebula',
   regions: 'Region',
   objects: 'Object',
   annotations: 'Annotation',
+  references: 'Reference image',
 };
 
 /** Editor for the selected nebula / region / object / annotation. */
@@ -224,6 +226,95 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
           value={r.notes}
           onChange={(v) => updateEnt('regions', r.id, { notes: v })}
         />
+      </div>
+    );
+  }
+
+  if (sel.c === 'references') {
+    const r = map.references[sel.id];
+    return (
+      <div className="panel">
+        {header}
+        <label className="field">
+          <span>Name</span>
+          <input
+            value={r.name}
+            onChange={(e) => updateEnt('references', r.id, { name: e.target.value })}
+          />
+        </label>
+        <label className="field">
+          <span>Opacity: {r.opacity.toFixed(2)}</span>
+          <input
+            type="range"
+            min={0.05}
+            max={1}
+            step={0.05}
+            value={r.opacity}
+            onChange={(e) =>
+              updateEnt('references', r.id, { opacity: Number(e.target.value) })
+            }
+          />
+        </label>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={!!r.locked}
+            onChange={(e) =>
+              updateEnt('references', r.id, { locked: e.target.checked })
+            }
+          />
+          <span>Locked — can't be picked or nudged</span>
+        </label>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={(r.layer ?? 'below') === 'above'}
+            onChange={(e) =>
+              updateEnt('references', r.id, {
+                layer: e.target.checked ? 'above' : 'below',
+              })
+            }
+          />
+          <span>Over the territories</span>
+        </label>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={!!r.exported}
+            onChange={(e) =>
+              updateEnt('references', r.id, { exported: e.target.checked })
+            }
+          />
+          <span>Include in exported images</span>
+        </label>
+        <div className="btn-row">
+          <button
+            className="mini-btn"
+            title="Match the picture's own proportions again"
+            onClick={() => {
+              const img = getImage(r.src);
+              if (!img?.naturalWidth) return;
+              updateEnt('references', r.id, {
+                h: (r.w * img.naturalHeight) / img.naturalWidth,
+              });
+            }}
+          >
+            Reset aspect
+          </button>
+          <button
+            className="mini-btn"
+            title="Put the camera on it"
+            onClick={() => focusOn(r.x + r.w / 2, r.y + r.h / 2)}
+          >
+            ◎ Go to
+          </button>
+        </div>
+        <div className="panel-note">
+          {Math.round(r.w)} × {Math.round(r.h)} on the map ·{' '}
+          {Math.round(r.src.length / 1024)} KB in the file. Drag a corner to
+          scale (Alt to stretch), then lock it and draw on top. A guest reading
+          the published map never sees it.
+        </div>
       </div>
     );
   }

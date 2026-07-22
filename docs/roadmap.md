@@ -189,6 +189,37 @@ sitting under a dozen empire rows where nobody would ever find it.
   by us and clamped to the viewport, with a hex field; the OS picker is still
   there one click further in, where it opens from the middle of the screen.
 
+## Phase H — reference images ✅
+
+For lining the map up against something real: a screenshot of the galaxy from
+the game, a sketch, an older export.
+
+- `RefImage` in `map.references` (format **v3**, migration fills the empty
+  collection in). Position, size, opacity, lock, layer, export flag.
+- **The bitmap lives inside the map** as a data URI. That is what makes it
+  survive a reload, reach co-editors over the same op channel as every other
+  edit, and ride along in the JSON export — no upload endpoint, no second
+  store, nothing to garbage-collect. The price is paid up front by
+  `persistence/images.ts`, which decodes, downscales to 2048 px and re-encodes
+  (WebP, JPEG fallback), shrinking further until the result fits ~2.5 MB. A
+  screenshot you are tracing does not need to be bigger than the screen.
+  - The server's limits were sized for maps of coordinates, so both had to be
+    raised: Fastify's 1 MB body limit and the WebSocket frame cap.
+- **Getting one in**: drop it on the canvas, paste it, or Outliner ▸
+  References ▸ Add image. It lands centred under the cursor, spanning most of
+  the view, at 60% opacity — you are about to draw on top of it.
+- **Adjusting one**: drag to move, drag a corner to scale (aspect held unless
+  Alt), then **lock** it and it stops being pickable at all, which is the
+  point — you can paint systems over it without nudging it.
+  - Neither a reference nor a nebula may intercept a *drag*: both cover large
+    areas, and stealing empty-space drags would make box select impossible.
+    They are picked up by a click that went nowhere, and a reference's interior
+    only becomes a drag target once it is the selected one.
+- **Who sees it**: nobody but the editors. A guest on a published link never
+  gets them (enforced where the canvas renders, not by hiding a button), and a
+  PNG export leaves them out unless the image is marked for export *and* the
+  box is ticked.
+
 ## Phase E — later
 
 - **Planets** — `System.bodies: Planet[]`, shown in a separate System View

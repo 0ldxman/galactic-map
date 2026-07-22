@@ -35,6 +35,7 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
       ['Ctrl + D', 'Duplicate'],
       ['Del', 'Delete the selection'],
       ['Enter / Esc', 'Finish or cancel an area'],
+      ['Drop / paste an image', 'Add it as a tracing reference'],
     ],
   },
   {

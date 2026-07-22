@@ -10,6 +10,7 @@ import {
   MapRegion,
   SpaceObject,
   Annotation,
+  RefImage,
   ObjectKind,
   AnnotationKind,
   emptyMap,
@@ -180,6 +181,7 @@ export interface EditorState {
   addObject: (x: number, y: number, opts?: Partial<SpaceObject>) => ID;
   linkObjects: (a: ID, b: ID) => void;
   addAnnotation: (a: Omit<Annotation, 'id'>) => ID;
+  addReference: (r: Omit<RefImage, 'id'>) => ID;
 
   // --- display ---
   setDisplay: (patch: Partial<DisplaySettings>) => void;
@@ -740,6 +742,13 @@ export const useEditor = create<EditorState>((set, get) => {
       const id = makeId('ann');
       commit([{ t: 'ent.add', c: 'annotations', ent: { ...a, id } }]);
       set({ selectedEntity: { c: 'annotations', id }, selection: [] });
+      return id;
+    },
+
+    addReference: (r) => {
+      const id = makeId('ref');
+      commit([{ t: 'ent.add', c: 'references', ent: { ...r, id } }]);
+      set({ selectedEntity: { c: 'references', id }, selection: [] });
       return id;
     },
   };

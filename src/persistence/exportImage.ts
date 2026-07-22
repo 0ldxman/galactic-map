@@ -3,6 +3,7 @@ import { resolveDisplay } from '../model/display';
 import { Camera } from '../render/camera';
 import { Renderer } from '../render/renderer';
 import { collectLegend, drawLegend, WorldRect } from '../render/legend';
+import { preloadReferences } from '../render/references';
 
 export type ExportMode = 'viewport' | 'galaxy' | 'empire';
 
@@ -13,6 +14,8 @@ export interface ImageExportOptions {
   /** longest side of the output image, in px */
   maxSize: number;
   transparent?: boolean;
+  /** draw the reference images that are marked for export (off by default) */
+  references?: boolean;
   legend?: boolean;
   title?: string;
   filename?: string;
@@ -45,6 +48,12 @@ export function mapBounds(map: GalaxyMap, empireId?: ID | null): WorldRect | nul
     for (const r of Object.values(map.regions)) add(r.x, r.y, r.size);
     for (const a of Object.values(map.annotations)) {
       for (const p of a.points) add(p.x, p.y, 10);
+    }
+    // A reference only widens the shot when it is going to be in it.
+    for (const r of Object.values(map.references ?? {})) {
+      if (!r.exported) continue;
+      add(r.x, r.y);
+      add(r.x + r.w, r.y + r.h);
     }
   }
   if (!isFinite(minX)) return null;
@@ -120,6 +129,7 @@ export function renderMapToCanvas(
     selectedEntity: null,
     connectFromId: null,
     transparent: opts.transparent,
+    references: opts.references ? 'exported' : false,
   });
 
   if (opts.legend) {
@@ -137,7 +147,7 @@ export function renderMapToCanvas(
   return canvas;
 }
 
-export function exportMapImage(
+export async function exportMapImage(
   map: GalaxyMap,
   cam: Camera,
   opts: ImageExportOptions
@@ -149,7 +159,12 @@ export function exportMapImage(
       ? viewportBounds(cam)
       : mapBounds(map, opts.mode === 'empire' ? opts.empireId : null);
 
-  if (!rect) return Promise.reject(new Error('Nothing to export.'));
+  if (!rect) throw new Error('Nothing to export.');
+
+  // The offscreen render happens once and synchronously, so anything it needs
+  // decoded has to be decoded first — the live canvas gets a second chance by
+  // redrawing, an export does not.
+  if (opts.references) await preloadReferences(map);
 
   const canvas = renderMapToCanvas(map, rect, opts);
   return new Promise((resolve, reject) => {

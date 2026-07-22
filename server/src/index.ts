@@ -83,9 +83,17 @@ function publicMeta(m: MapMeta) {
 async function main() {
   initStore();
 
-  const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'warn' } });
+  // Maps carry their reference images inline as data URIs, so a document is no
+  // longer a few hundred KB of coordinates. Fastify's 1 MB default body limit
+  // would reject saving one the moment somebody drops a screenshot in.
+  const MAX_BODY = 32 * 1024 * 1024;
+  const app = Fastify({
+    logger: { level: process.env.LOG_LEVEL ?? 'warn' },
+    bodyLimit: MAX_BODY,
+  });
   await app.register(cookie);
-  await app.register(websocket);
+  // Same reasoning for the op channel: one `ent.add` can carry a whole image.
+  await app.register(websocket, { options: { maxPayload: MAX_BODY } });
 
   // ---- auth ----------------------------------------------------------------
 

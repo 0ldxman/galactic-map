@@ -22,6 +22,8 @@ export interface DisplaySettings {
   showMarkers: boolean;
 
   showNebulae: boolean;
+  /** tracing references (editor only — a guest never sees them) */
+  showReferences: boolean;
   showRegions: boolean;
   showObjects: boolean;
   showAnnotations: boolean;
@@ -63,6 +65,7 @@ export const DEFAULT_DISPLAY: DisplaySettings = {
   showMarkers: true,
 
   showNebulae: true,
+  showReferences: true,
   showRegions: true,
   showObjects: true,
   showAnnotations: true,

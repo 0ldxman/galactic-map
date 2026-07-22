@@ -14,6 +14,7 @@ import { Camera } from './camera';
 import { TerritoryRenderer } from './territories';
 import { NebulaRenderer } from './nebulae';
 import { drawObjectIcon } from './icons';
+import { drawReferences } from './references';
 import { mulberry32 } from '../util/rng';
 
 /** Screen-space rectangle of an in-progress rubber-band selection. */
@@ -51,6 +52,12 @@ export interface RenderOptions {
   lasso?: readonly { x: number; y: number }[] | null;
   /** region boundary being drawn, in world coordinates */
   draftRegion?: readonly { x: number; y: number }[] | null;
+  /**
+   * Tracing references. Left undefined they follow the map's display setting,
+   * which is what the editor wants; an export or a guest's view passes `false`
+   * (or `'exported'`, for an export that was asked to include them).
+   */
+  references?: false | 'exported';
 }
 
 interface BgStar {
@@ -109,6 +116,19 @@ export class Renderer {
 
     if (!opts.transparent) this.drawBackground(ctx, cam, dsp);
 
+    // Tracing references, under everything: you draw the map on top of them.
+    const refs =
+      opts.references === false
+        ? null
+        : { exportedOnly: opts.references === 'exported' };
+    if (refs && dsp.showReferences) {
+      drawReferences(ctx, map, cam, 'below', {
+        ...refs,
+        selectedId:
+          opts.selectedEntity?.c === 'references' ? opts.selectedEntity.id : null,
+      });
+    }
+
     // Nebulae sit under everything political — they are the terrain.
     this.nebulae.update(map.nebulae, opts.deferTerritory, dsp);
     if (dsp.showNebulae) this.nebulae.draw(ctx, cam);
@@ -121,6 +141,16 @@ export class Renderer {
     // Territory borders (rebuilt only when the map changes; drawn as vectors).
     this.territory.update(map.systems, map.empires, opts.deferTerritory, dsp);
     if (dsp.showTerritories) this.territory.draw(ctx, cam);
+
+    // A reference can also sit over the territories — handy when the thing you
+    // are matching is the border shapes rather than the star positions.
+    if (refs && dsp.showReferences) {
+      drawReferences(ctx, map, cam, 'above', {
+        ...refs,
+        selectedId:
+          opts.selectedEntity?.c === 'references' ? opts.selectedEntity.id : null,
+      });
+    }
 
     // Region boundaries: chart notation drawn over the political fill, under
     // the stars, so a sector reads as a line on the map rather than terrain.

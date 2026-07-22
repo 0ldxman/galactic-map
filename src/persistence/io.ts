@@ -4,11 +4,14 @@ const STORAGE_KEY = 'galactic-map:autosave';
 
 /**
  * Bring an older map up to the current format. v1 had no nebulae, regions,
- * objects or annotations; everything added since is optional or defaulted, so
- * the migration is just filling in the empty collections.
+ * objects or annotations; v2 had no reference images. Everything added since is
+ * optional or defaulted, so the migration is just filling in the empty
+ * collections.
  */
 export function migrate(map: GalaxyMap): GalaxyMap {
-  if (map.version >= MAP_VERSION && map.nebulae && map.annotations) return map;
+  if (map.version >= MAP_VERSION && map.nebulae && map.annotations && map.references) {
+    return map;
+  }
   return {
     ...map,
     version: MAP_VERSION,
@@ -16,6 +19,7 @@ export function migrate(map: GalaxyMap): GalaxyMap {
     regions: map.regions ?? {},
     objects: map.objects ?? {},
     annotations: map.annotations ?? {},
+    references: map.references ?? {},
   };
 }
 
