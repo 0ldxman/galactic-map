@@ -1,6 +1,6 @@
 import { GalaxyMap, MapRegion, Point, System } from '../model/types';
 import { DisplaySettings, DEFAULT_DISPLAY } from '../model/display';
-import { sectorSystems } from '../model/sectors';
+import { sectorPartition } from '../model/sectors';
 import { traceMask, ringsArea, ringsCentroid } from '../util/polybool';
 import { hexToRgb } from '../util/color';
 import { Camera } from './camera';
@@ -9,22 +9,34 @@ import { Camera } from './camera';
  * Sector boundaries, derived from membership.
  *
  * A sector is a set of systems, not a drawing, so its outline has to be
- * computed: each member is rasterised as a disc, the discs are merged into one
- * mask, and the mask's boundary is traced into smoothed world-space rings —
- * the same machinery the empire borders use, which is why the two look like
- * they belong on the same map. Islands and holes come out for free, so a
- * sector split across the galaxy simply gets two outlines.
+ * computed. Each member claims the space around it out to its influence, the
+ * claims are merged, and the boundary of what is left is traced into smoothed
+ * world-space rings — the same machinery the empire borders use, which is why
+ * the two look like they belong on the same map. Islands and holes come out for
+ * free, so a sector split across the galaxy simply gets two outlines.
+ *
+ * Crucially, systems *outside* the sector compete for that space too, exactly
+ * as unclaimed systems compete with the empires: a non-member wins the cells
+ * nearest to itself, and nothing is ever drawn for it. The boundary therefore
+ * falls between a member and its nearest outside neighbour rather than washing
+ * over it, which is what keeps a sector from swallowing half the map because
+ * one of its systems has a wide influence.
  *
  * The result is cached against the collections it was built from, so panning
  * and zooming cost two path draws and an unrelated edit costs nothing.
  */
 
-/** How far past a member system the boundary reaches, as a fraction of its influence. */
+/** How far past a system the boundary reaches, as a fraction of its influence. */
 const REACH = 1.15;
 /** Minimum reach in world units, so a zero-influence system still counts. */
 const MIN_REACH = 26;
 /** Cells across the longer side of the working area. */
 const GRID = 420;
+
+/** How far one system's claim carries, in world units. */
+function reachOf(s: System): number {
+  return Math.max(MIN_REACH, s.influence * REACH);
+}
 
 export interface SectorShape {
   id: string;
@@ -38,13 +50,23 @@ export interface SectorShape {
   members: number;
 }
 
-/** Rings enclosing a set of systems, or an empty array for none. */
-export function hullOfSystems(list: readonly System[]): Point[][] {
+/**
+ * Rings enclosing a set of systems, or an empty array for none.
+ *
+ * `others` are the systems that must be kept outside: they take the cells they
+ * are nearest to (measured in the same falloff, so a bigger neighbour takes
+ * more), and the rings are traced around what the members are left holding. At
+ * a system's own position its claim is 1 — the maximum — so a member can never
+ * be argued out of its own cell, however large the neighbour.
+ */
+export function hullOfSystems(
+  list: readonly System[],
+  others: readonly System[] = []
+): Point[][] {
   if (list.length === 0) return [];
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  const reach = (s: System) => Math.max(MIN_REACH, s.influence * REACH);
   for (const s of list) {
-    const r = reach(s);
+    const r = reachOf(s);
     if (s.x - r < minX) minX = s.x - r;
     if (s.y - r < minY) minY = s.y - r;
     if (s.x + r > maxX) maxX = s.x + r;
@@ -60,21 +82,52 @@ export function hullOfSystems(list: readonly System[]): Point[][] {
   const h = Math.ceil(spanY / cell) + pad * 2 + 1;
   if (w * h > 4_000_000) return [];
 
-  const mask = new Uint8Array(w * h);
-  for (const s of list) {
-    const r = reach(s);
-    const r2 = r * r;
-    // Only the cells the disc could possibly touch.
-    const gx0 = Math.max(0, Math.floor((s.x - r - ox) / cell));
-    const gx1 = Math.min(w - 1, Math.ceil((s.x + r - ox) / cell));
-    const gy0 = Math.max(0, Math.floor((s.y - r - oy) / cell));
-    const gy1 = Math.min(h - 1, Math.ceil((s.y + r - oy) / cell));
-    for (let gy = gy0; gy <= gy1; gy++) {
-      const wy = oy + (gy + 0.5) * cell - s.y;
-      for (let gx = gx0; gx <= gx1; gx++) {
-        const wx = ox + (gx + 0.5) * cell - s.x;
-        if (wx * wx + wy * wy <= r2) mask[gy * w + gx] = 1;
+  /** Strongest claim on each cell, written only where it beats what is there. */
+  const paint = (src: readonly System[], out: Float32Array) => {
+    for (const s of src) {
+      const r = reachOf(s);
+      // Only the cells this system could possibly reach.
+      const gx0 = Math.max(0, Math.floor((s.x - r - ox) / cell));
+      const gx1 = Math.min(w - 1, Math.ceil((s.x + r - ox) / cell));
+      const gy0 = Math.max(0, Math.floor((s.y - r - oy) / cell));
+      const gy1 = Math.min(h - 1, Math.ceil((s.y + r - oy) / cell));
+      for (let gy = gy0; gy <= gy1; gy++) {
+        const wy = oy + (gy + 0.5) * cell - s.y;
+        for (let gx = gx0; gx <= gx1; gx++) {
+          const wx = ox + (gx + 0.5) * cell - s.x;
+          const d = Math.sqrt(wx * wx + wy * wy);
+          if (d >= r) continue;
+          const v = 1 - d / r;
+          const p = gy * w + gx;
+          if (v > out[p]) out[p] = v;
+        }
       }
+    }
+  };
+
+  const mine = new Float32Array(w * h);
+  paint(list, mine);
+
+  const mask = new Uint8Array(w * h);
+  if (others.length === 0) {
+    for (let p = 0; p < mask.length; p++) mask[p] = mine[p] > 0 ? 1 : 0;
+  } else {
+    const rival = new Float32Array(w * h);
+    // Only outsiders that can reach the working area are worth painting.
+    paint(
+      others.filter((s) => {
+        const r = reachOf(s);
+        return (
+          s.x + r > ox && s.x - r < ox + w * cell &&
+          s.y + r > oy && s.y - r < oy + h * cell
+        );
+      }),
+      rival
+    );
+    // A tie goes to the member: two systems of equal influence split the gap
+    // between them down the middle, which is where the eye expects the line.
+    for (let p = 0; p < mask.length; p++) {
+      mask[p] = mine[p] > 0 && mine[p] >= rival[p] ? 1 : 0;
     }
   }
   return traceMask(mask, w, h, ox, oy, cell, 4);
@@ -114,9 +167,9 @@ export class SectorRenderer {
   private build(map: GalaxyMap) {
     this.shapes = [];
     for (const r of Object.values(map.regions)) {
-      const members = sectorSystems(map, r.id);
+      const { members, others } = sectorPartition(map, r.id);
       if (members.length === 0) continue;
-      const rings = hullOfSystems(members);
+      const rings = hullOfSystems(members, others);
       if (rings.length === 0) continue;
       const path = new Path2D();
       for (const ring of rings) {

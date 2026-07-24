@@ -71,6 +71,29 @@ export function sectorSystems(map: GalaxyMap, id: ID): System[] {
   );
 }
 
+/**
+ * The systems of `id`, and everything else on the map.
+ *
+ * The second list matters as much as the first: a sector boundary is decided
+ * by competition, exactly as an empire border is. A system outside the sector —
+ * whether it is in a different one or in none at all — pushes the boundary
+ * back with its own influence, so a sector stops short of the systems it does
+ * not contain instead of flowing over them.
+ */
+export function sectorPartition(
+  map: GalaxyMap,
+  id: ID
+): { members: System[]; others: System[] } {
+  const ids = new Set(sectorSubtree(map, id));
+  const members: System[] = [];
+  const others: System[] = [];
+  for (const s of Object.values(map.systems)) {
+    if (sectorsOf(s).some((x) => ids.has(x))) members.push(s);
+    else others.push(s);
+  }
+  return { members, others };
+}
+
 /** Systems assigned to this sector itself, ignoring its children. */
 export function ownSystems(map: GalaxyMap, id: ID): System[] {
   return Object.values(map.systems).filter((s) => sectorsOf(s).includes(id));

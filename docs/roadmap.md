@@ -239,10 +239,19 @@ A sector is now **a set of systems**, assigned the way empire ownership is.
 - **Sectors nest** (`MapRegion.parentId`). A child's systems count as the
   parent's, so a containing sector needn't repeat them. Cycles are refused in
   the store, not just greyed out in the UI, because every tree walk would hang.
-- The **boundary is derived**: members are rasterised as discs, merged, and the
-  mask traced into smoothed rings — the same machinery as the empire borders,
-  which is why they look like they belong on one map. Islands and holes fall
-  out for free. Cached against `systems` and `regions` by reference.
+- The **boundary is derived**: each member claims the space out to its
+  influence, the claims are merged, and the result is traced into smoothed
+  rings — the same machinery as the empire borders, which is why they look like
+  they belong on one map. Islands and holes fall out for free. Cached against
+  `systems` and `regions` by reference.
+- **Systems outside the sector compete for that space**, exactly as unclaimed
+  systems compete with the empires (`sectorPartition` splits the map into the
+  two sides). A non-member — in another sector or in none — wins the cells it
+  is nearest, and nothing is ever drawn for it, so the line falls between the
+  two systems by influence instead of the sector washing over a neighbour it
+  does not contain. That, not a separate size knob, is what keeps a sector from
+  ballooning across empty space. At its own position a system's claim is 1, the
+  maximum, so a member can never be argued off its own ground.
 - The **name is sized from the enclosed area and fades with the zoom exactly
   like an empire name**, handing off to the system cards together. A sector
   with no members stays a plain label at its own position — which is what every
