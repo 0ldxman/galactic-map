@@ -1084,3 +1084,28 @@ html, body, #root {
   .ol-row { flex-wrap: wrap; }
   .ol-name { flex: 1 0 60%; }
 }
+
+/* ---- Checklist (export: which empires stay in colour) ---- */
+.pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 4px;
+  background: #0f1120;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.pick-row:hover { background: #191d30; }
+.pick-row input { accent-color: var(--accent); margin: 0; }
+.pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

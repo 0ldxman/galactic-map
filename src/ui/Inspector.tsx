@@ -7,14 +7,28 @@ import {
   OwnStatus,
 } from '../model/types';
 import { MARKER_TYPES } from '../model/markers';
-import { STATUS_TYPES } from '../model/status';
-import { STAR_SIZES, normalizeStars, makeStarBody } from '../model/stars';
+import { sectorTree } from '../model/sectors';
+import { STATUS_TYPES, canHaveOccupier } from '../model/status';
+import { STAR_SIZES, normalizeStars, makeStarBody, sizeLabel } from '../model/stars';
 import { EntityInspector } from './EntityInspector';
 import { Notes } from './Notes';
 import { lighten } from '../util/color';
 import { ColorSwatch } from './ColorSwatch';
 
-const BODY_TYPES: StarType[] = ['yellow', 'red', 'blue', 'white', 'neutron'];
+// Black holes are pickable per body, so a system can be a lone hole or a star
+// with one for a companion — which is how they appear in the game.
+const BODY_TYPES: StarType[] = [
+  'yellow', 'red', 'blue', 'white', 'neutron', 'blackhole',
+];
+
+const TYPE_LABELS: Record<StarType, string> = {
+  yellow: 'Yellow',
+  red: 'Red',
+  blue: 'Blue',
+  white: 'White',
+  neutron: 'Neutron star',
+  blackhole: 'Black hole',
+};
 
 export function Inspector() {
   const map = useEditor((s) => s.map);
@@ -30,6 +44,11 @@ export function Inspector() {
   const updateEmpire = useEditor((s) => s.updateEmpire);
   const addEmpire = useEditor((s) => s.addEmpire);
   const toggleMarkerMany = useEditor((s) => s.toggleMarkerMany);
+  const toggleSectorMany = useEditor((s) => s.toggleSectorMany);
+
+  // Offered wherever a system is being edited, in tree order so a nested
+  // sector reads as belonging under its parent.
+  const sectorList = sectorTree(map);
 
   if (selectedEntity && map[selectedEntity.c][selectedEntity.id]) {
     return <EntityInspector entity={selectedEntity} />;
@@ -183,6 +202,35 @@ export function Inspector() {
           </select>
         </label>
 
+
+        {picked.some((s) => canHaveOccupier(s)) && (
+          <label className="field">
+            <span>Held by (applies to all)</span>
+            <select
+              value={
+                new Set(picked.map((s) => s.occupierId ?? '')).size === 1
+                  ? picked[0].occupierId ?? ''
+                  : '__mixed__'
+              }
+              onChange={(e) =>
+                updateSystems(ids, {
+                  occupierId: e.target.value || null,
+                })
+              }
+            >
+              {new Set(picked.map((s) => s.occupierId ?? '')).size > 1 && (
+                <option value="__mixed__">— Mixed —</option>
+              )}
+              <option value="">— unspecified —</option>
+              {Object.values(map.empires).map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
         <label className="field">
           <span>
             Influence: {infMin === infMax ? infMin : `${infMin}–${infMax}`}
@@ -221,6 +269,40 @@ export function Inspector() {
             })}
           </div>
         </div>
+
+        {sectorList.length > 0 && (
+          <div className="field" style={{ marginTop: 4 }}>
+            <span>Sectors (applies to all)</span>
+            <div className="marker-grid">
+              {sectorList.map(({ region, depth }) => {
+                const on = picked.every((s) =>
+                  (s.sectors ?? []).includes(region.id)
+                );
+                const some = picked.some((s) =>
+                  (s.sectors ?? []).includes(region.id)
+                );
+                return (
+                  <button
+                    key={region.id}
+                    type="button"
+                    className={`marker-chip${on ? ' active' : some ? ' partial' : ''}`}
+                    title={region.name}
+                    onClick={() => toggleSectorMany(ids, region.id)}
+                  >
+                    <span
+                      className="peer-dot"
+                      style={{ background: region.color ?? '#c9d6f2' }}
+                    />
+                    <span className="marker-label">
+                      {'\u00a0'.repeat(depth * 2)}
+                      {region.name}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -265,7 +347,13 @@ export function Inspector() {
             <div className="star-row" key={i}>
               <span
                 className="star-dot"
-                style={{ background: STAR_COLORS[b.type] }}
+                style={{
+                  background: STAR_COLORS[b.type],
+                  // A black hole is a hole: a ring reads better than a dot the
+                  // colour of the background.
+                  border:
+                    b.type === 'blackhole' ? '1px solid #7a6fa8' : undefined,
+                }}
               />
               <select
                 value={b.type}
@@ -273,7 +361,7 @@ export function Inspector() {
               >
                 {BODY_TYPES.map((t) => (
                   <option key={t} value={t}>
-                    {t}
+                    {TYPE_LABELS[t]}
                   </option>
                 ))}
               </select>
@@ -283,7 +371,7 @@ export function Inspector() {
               >
                 {STAR_SIZES.map((s) => (
                   <option key={s.id} value={s.id}>
-                    {s.label}
+                    {sizeLabel(b.type, s.id)}
                   </option>
                 ))}
               </select>
@@ -336,6 +424,31 @@ export function Inspector() {
           ))}
         </select>
       </label>
+      {canHaveOccupier(sys) && (
+        <label className="field">
+          <span>Held by</span>
+          <select
+            value={sys.occupierId ?? ''}
+            onChange={(e) =>
+              updateSystem(sys.id, { occupierId: e.target.value || null })
+            }
+          >
+            <option value="">— unspecified —</option>
+            {Object.values(map.empires)
+              .filter((emp) => emp.id !== sys.ownerId)
+              .map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.name}
+                </option>
+              ))}
+          </select>
+          <div className="panel-note">
+            The territory keeps its owner's colour and border; the hatch over it
+            takes the occupier's, so the map reads as "still theirs, but someone
+            else is sitting on it".
+          </div>
+        </label>
+      )}
       <label className="field">
         <span>Influence: {Math.round(sys.influence)}</span>
         <input
@@ -385,6 +498,39 @@ export function Inspector() {
           })}
         </div>
       </div>
+
+      {sectorList.length > 0 && (
+        <div className="field" style={{ marginTop: 4 }}>
+          <span>Sectors</span>
+          <div className="marker-grid">
+            {sectorList.map(({ region, depth }) => {
+              const on = (sys.sectors ?? []).includes(region.id);
+              return (
+                <button
+                  key={region.id}
+                  type="button"
+                  className={`marker-chip${on ? ' active' : ''}`}
+                  title={region.name}
+                  onClick={() => toggleSectorMany([sys.id], region.id)}
+                >
+                  <span
+                    className="peer-dot"
+                    style={{ background: region.color ?? '#c9d6f2' }}
+                  />
+                  <span className="marker-label">
+                    {'\u00a0'.repeat(depth * 2)}
+                    {region.name}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="panel-note">
+            A system can be in several sectors at once; a sector nested inside
+            another counts for both.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

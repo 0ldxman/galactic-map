@@ -2,22 +2,29 @@ import { GalaxyMap, ID } from '../model/types';
 import { resolveDisplay } from '../model/display';
 import { Camera } from '../render/camera';
 import { Renderer } from '../render/renderer';
-import { collectLegend, drawLegend, WorldRect } from '../render/legend';
+import {
+  collectLegend,
+  drawLegend,
+  DEFAULT_LEGEND,
+  LegendOptions,
+  WorldRect,
+} from '../render/legend';
 import { preloadReferences } from '../render/references';
 
 export type ExportMode = 'viewport' | 'galaxy' | 'empire';
 
 export interface ImageExportOptions {
   mode: ExportMode;
-  /** the empire to keep in colour when mode === 'empire' */
-  empireId?: ID | null;
+  /** the empires to keep in colour when mode === 'empire'; the rest go grey */
+  empireIds?: readonly ID[];
   /** longest side of the output image, in px */
   maxSize: number;
   transparent?: boolean;
   /** draw the reference images that are marked for export (off by default) */
   references?: boolean;
   legend?: boolean;
-  title?: string;
+  /** how the legend is built and placed; omitted means the defaults */
+  legendOptions?: LegendOptions;
   filename?: string;
 }
 
@@ -25,7 +32,11 @@ export interface ImageExportOptions {
 const CANVAS_LIMIT = 16384;
 
 /** World bounds of everything drawn on the map, or null if it is empty. */
-export function mapBounds(map: GalaxyMap, empireId?: ID | null): WorldRect | null {
+export function mapBounds(
+  map: GalaxyMap,
+  empireIds?: readonly ID[]
+): WorldRect | null {
+  const focus = empireIds && empireIds.length > 0 ? new Set(empireIds) : null;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const add = (x: number, y: number, pad = 0) => {
     if (x - pad < minX) minX = x - pad;
@@ -37,10 +48,10 @@ export function mapBounds(map: GalaxyMap, empireId?: ID | null): WorldRect | nul
   for (const s of Object.values(map.systems)) {
     // When focusing one empire, frame that empire — everything else is context
     // that may or may not fall inside the shot.
-    if (empireId && s.ownerId !== empireId) continue;
+    if (focus && (!s.ownerId || !focus.has(s.ownerId))) continue;
     add(s.x, s.y, s.influence);
   }
-  if (!empireId) {
+  if (!focus) {
     for (const n of Object.values(map.nebulae)) {
       for (const b of n.blobs) add(b.x, b.y, b.r);
     }
@@ -77,17 +88,19 @@ export function viewportBounds(cam: Camera): WorldRect {
 }
 
 /**
- * Recolour every empire except `focusId` in neutral grey. Doing it on a copy of
- * the map — rather than teaching the renderer about a "focus" mode — keeps the
- * drawing code unaware of exports; it just draws the map it is given.
+ * Recolour every empire outside `focus` in neutral grey, so the chosen ones —
+ * one, or an alliance, or the two sides of a war — keep their own fill and
+ * border while the rest read as context. Doing it on a copy of the map, rather
+ * than teaching the renderer about a "focus" mode, keeps the drawing code
+ * unaware that exports exist; it just draws the map it is given.
  */
-function greyOthers(map: GalaxyMap, focusId: ID): GalaxyMap {
+function greyOthers(map: GalaxyMap, focus: readonly ID[]): GalaxyMap {
+  const keep = new Set(focus);
   const empires: GalaxyMap['empires'] = {};
   for (const e of Object.values(map.empires)) {
-    empires[e.id] =
-      e.id === focusId
-        ? e
-        : { ...e, color: '#5d6472', borderColor: '#8b93a3' };
+    empires[e.id] = keep.has(e.id)
+      ? e
+      : { ...e, color: '#5d6472', borderColor: '#8b93a3' };
   }
   return { ...map, empires };
 }
@@ -114,8 +127,8 @@ export function renderMapToCanvas(
   const ctx = canvas.getContext('2d')!;
 
   const drawMap =
-    opts.mode === 'empire' && opts.empireId
-      ? greyOthers(map, opts.empireId)
+    opts.mode === 'empire' && opts.empireIds?.length
+      ? greyOthers(map, opts.empireIds)
       : map;
 
   const cam = new Camera();
@@ -134,14 +147,23 @@ export function renderMapToCanvas(
 
   if (opts.legend) {
     const dsp = resolveDisplay(map.display);
+    const legendOpts = opts.legendOptions ?? DEFAULT_LEGEND;
     const groups = collectLegend(
       map,
       viewportBounds(cam),
       dsp,
-      opts.mode === 'empire' ? opts.empireId : null
+      opts.mode === 'empire' ? opts.empireIds : null,
+      legendOpts
     );
     // Keep the panel a sane fraction of the image on huge exports.
-    drawLegend(ctx, groups, h, Math.max(1, Math.min(4, longest / 1400)), opts.title);
+    drawLegend(
+      ctx,
+      groups,
+      w,
+      h,
+      Math.max(1, Math.min(4, longest / 1400)),
+      legendOpts
+    );
   }
 
   return canvas;
@@ -157,7 +179,7 @@ export async function exportMapImage(
   const rect: WorldRect | null =
     opts.mode === 'viewport'
       ? viewportBounds(cam)
-      : mapBounds(map, opts.mode === 'empire' ? opts.empireId : null);
+      : mapBounds(map, opts.mode === 'empire' ? opts.empireIds : undefined);
 
   if (!rect) throw new Error('Nothing to export.');
 

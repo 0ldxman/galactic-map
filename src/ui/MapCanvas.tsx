@@ -5,7 +5,8 @@ import { liveCamera } from '../render/camera';
 import { Renderer, Marquee } from '../render/renderer';
 import { makeClip, parseClip, Clip } from '../model/clipboard';
 import { useSync, sendCursor } from '../net/sync';
-import { pointInPolygon, polygonCentroid, polygonBounds, thinPath } from '../util/geom';
+import { pointInRings } from '../util/polybool';
+import { pointInPolygon } from '../util/geom';
 import {
   hitHandle,
   resizeRect,
@@ -62,7 +63,6 @@ interface DragState {
     | 'ent-vertex'
     | 'draw'
     | 'brush'
-    | 'region'
     | 'ref-resize';
   /** world position of the pointer when a move-drag started */
   originX: number;
@@ -98,11 +98,11 @@ let localClip: Clip | null = null;
 export function MapCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const camRef = useRef(liveCamera);
-  const rendererRef = useRef(new Renderer());
+  // `true` = use the shared sector cache, so panels can read what was drawn.
+  const rendererRef = useRef(new Renderer(true));
   const dirtyRef = useRef(true);
   const marqueeRef = useRef<Marquee | null>(null);
   const lassoRef = useRef<Point[] | null>(null);
-  const regionDraftRef = useRef<Point[] | null>(null);
   const draftRef = useRef<Annotation | null>(null);
   const cursorRef = useRef({ x: 0, y: 0, inside: false });
   const lastCursorSent = useRef(0);
@@ -222,7 +222,6 @@ export function MapCanvas() {
           deferTerritory: dragRef.current.mode === 'move',
           marquee: marqueeRef.current,
           lasso: lassoRef.current,
-          draftRegion: regionDraftRef.current,
           draftAnnotation: draftRef.current,
           // Only editors have pointers worth showing, and a viewer sees the
           // map alone — no one else's cursor either.
@@ -404,51 +403,40 @@ export function MapCanvas() {
   };
 
   /**
-   * Regions come in two shapes: an outlined area (hit anywhere inside it, and
-   * on its vertex handles when selected) or a bare label (hit on the text).
+   * Which sector is under the pointer.
+   *
+   * A sector's outline is derived from its members, so the cached shapes the
+   * renderer just drew are the truth — no separate geometry to keep in step.
+   * A sector can cover half the map, so its interior only counts as a target
+   * when it is already selected (or `interior`, for a reader tapping the map);
+   * otherwise you aim at the dashed boundary itself, or at the name. Without
+   * that, dragging a selection box across a sector would grab the sector.
    */
   const hitTestRegion = (
     sx: number,
     sy: number,
     selectedId: ID | null,
-    /** count anywhere inside the boundary as a hit, not just the edge */
     interior = false
   ): { id: ID; vertex: number } | null => {
     const cam = camRef.current;
     const { map } = useEditor.getState();
-
-    if (selectedId) {
-      const r = map.regions[selectedId];
-      if (r?.shape) {
-        for (let i = 0; i < r.shape.length; i++) {
-          const p = cam.worldToScreen(r.shape[i].x, r.shape[i].y);
-          if (Math.hypot(p.x - sx, p.y - sy) <= HANDLE_HIT) {
-            return { id: r.id, vertex: i };
-          }
-        }
-      }
-    }
-
     const w = cam.screenToWorld(sx, sy);
+    const shapes = rendererRef.current.sectors;
+
     let bestArea = Infinity;
     let best: string | null = null;
     for (const r of Object.values(map.regions)) {
-      if (r.shape && r.shape.length >= 3) {
-        // A sector can cover half the map, so its interior is only a target
-        // once it is the selected one — otherwise dragging a selection box
-        // across a sector would grab the sector instead. Before that, aim at
-        // the boundary line itself (or at the name).
-        const onEdge = nearRing(sx, sy, r.shape, cam);
+      const sh = shapes.shapeOf(r.id);
+      if (sh) {
+        const onEdge = sh.rings.some((ring) => nearRing(sx, sy, ring, cam));
         const inside =
-          (interior || selectedId === r.id) &&
-          pointInPolygon(w.x, w.y, r.shape);
+          (interior || selectedId === r.id) && pointInRings(w.x, w.y, sh.rings);
         if (!onEdge && !inside) continue;
-        // A region inside another region wins — you meant the smaller one.
-        const b = polygonBounds(r.shape);
-        const area = (b.maxX - b.minX) * (b.maxY - b.minY);
-        if (area < bestArea) { bestArea = area; best = r.id; }
+        // A sector nested inside another wins — you meant the smaller one.
+        if (sh.area < bestArea) { bestArea = sh.area; best = r.id; }
         continue;
       }
+      // No members: it is just a label sitting at its own position.
       const fontPx = r.size * cam.zoom;
       if (fontPx < 4) continue;
       const p = cam.worldToScreen(r.x, r.y);
@@ -576,7 +564,6 @@ export function MapCanvas() {
     drag.collapseTo = null;
     marqueeRef.current = null;
     lassoRef.current = null;
-    regionDraftRef.current = null;
     dirtyRef.current = true;
   };
 
@@ -831,17 +818,17 @@ export function MapCanvas() {
         break;
       }
       case 'region': {
-        if (state.regionMode === 'area') {
-          // Drag out the boundary; it is closed and named on release.
-          regionDraftRef.current = [{ x: w.x, y: w.y }];
-          drag.mode = 'region';
-          dirtyRef.current = true;
-        } else {
-          // Size the new label relative to the current zoom so it reads well
-          // right away instead of appearing as a speck or filling the screen.
-          state.addRegion(w.x, w.y, { size: Math.max(12, 46 / cam.zoom) });
-          drag.mode = 'none';
-        }
+        // Assigning systems, the same gesture as painting an owner: the whole
+        // stroke is one undo step, and it opens even on a miss so a drag that
+        // starts on empty space keeps working.
+        let sid = state.activeSectorId;
+        if (!sid || !state.map.regions[sid]) sid = state.addSector();
+        state.beginTx();
+        drag.tx = true;
+        drag.erasing = e.altKey;
+        const hit = hitTest(x, y, scale);
+        if (hit) state.setSectorMembership([hit], sid, !drag.erasing);
+        drag.mode = 'none';
         break;
       }
       case 'object': {
@@ -993,15 +980,6 @@ export function MapCanvas() {
           );
           state.updateEnt('annotations', a.id, { points });
         }
-      } else if (drag.ent.c === 'regions') {
-        const r = state.map.regions[drag.ent.id];
-        if (r?.shape) {
-          const shape = r.shape.map((p, i) =>
-            i === drag.vertex ? { x: w.x, y: w.y } : p
-          );
-          const c = polygonCentroid(shape);
-          state.updateEnt('regions', r.id, { shape, x: c.x, y: c.y });
-        }
       }
     } else if (drag.mode === 'ref-resize' && drag.ent) {
       if (!drag.tx) {
@@ -1020,15 +998,6 @@ export function MapCanvas() {
       const last = lassoRef.current[lassoRef.current.length - 1];
       if (!last || Math.hypot(x - last.x, y - last.y) > 3) {
         lassoRef.current.push({ x, y });
-        dirtyRef.current = true;
-      }
-    } else if (drag.mode === 'region' && regionDraftRef.current) {
-      const pts = regionDraftRef.current;
-      const last = pts[pts.length - 1];
-      // Thin as we go: one point per pointer event is far more than the shape
-      // needs, and every extra vertex is another handle to fight with later.
-      if (!last || Math.hypot(w.x - last.x, w.y - last.y) > 12 / cam.zoom) {
-        pts.push({ x: w.x, y: w.y });
         dirtyRef.current = true;
       }
     } else if (drag.mode === 'marquee' && marqueeRef.current) {
@@ -1051,6 +1020,11 @@ export function MapCanvas() {
     } else if (state.tool === 'paint' && drag.tx && e.buttons) {
       const hit = hitTest(x, y, drag.touch ? TOUCH_HIT_SCALE : 1);
       if (hit && state.activeEmpireId) state.setOwner(hit, state.activeEmpireId);
+    } else if (state.tool === 'region' && drag.tx && e.buttons) {
+      const hit = hitTest(x, y, drag.touch ? TOUCH_HIT_SCALE : 1);
+      if (hit && state.activeSectorId) {
+        state.setSectorMembership([hit], state.activeSectorId, !drag.erasing);
+      }
     } else if (draftRef.current && draftRef.current.kind === 'polygon') {
       // Rubber-band the next polygon vertex to the cursor.
       const d = draftRef.current;
@@ -1083,13 +1057,9 @@ export function MapCanvas() {
     } else if (ref.c === 'regions') {
       const r = state.map.regions[ref.id];
       if (!r) return;
-      state.updateEnt('regions', ref.id, {
-        x: r.x + dx,
-        y: r.y + dy,
-        ...(r.shape
-          ? { shape: r.shape.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
-          : {}),
-      });
+      // Only a memberless sector has a position of its own to drag; one with
+      // members takes its label from the area it encloses.
+      state.updateEnt('regions', ref.id, { x: r.x + dx, y: r.y + dy });
     }
   };
 
@@ -1165,22 +1135,6 @@ export function MapCanvas() {
         pickBackdrop(x, y);
       }
       lassoRef.current = null;
-      dirtyRef.current = true;
-    }
-
-    if (drag.mode === 'region' && regionDraftRef.current) {
-      const pts = thinPath(regionDraftRef.current, 8 / cam.zoom);
-      regionDraftRef.current = null;
-      if (pts.length >= 3) {
-        const b = polygonBounds(pts);
-        const c = polygonCentroid(pts);
-        // Fit the label to the area it names rather than to the current zoom.
-        const span = Math.max(b.maxX - b.minX, b.maxY - b.minY);
-        state.addRegion(c.x, c.y, {
-          shape: pts,
-          size: Math.max(10, span * 0.13),
-        });
-      }
       dirtyRef.current = true;
     }
 

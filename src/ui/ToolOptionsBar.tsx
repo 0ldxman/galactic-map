@@ -1,6 +1,10 @@
 import { useEditor } from '../model/store';
 import { AnnotationKind, ObjectKind } from '../model/types';
 import { OBJECT_TYPES, OBJECT_BY_ID } from '../model/objects';
+import { sectorTree, sectorSystems } from '../model/sectors';
+import { GalaxyMap } from '../model/types';
+import { ColorSwatch } from './ColorSwatch';
+import { liveCamera } from '../render/camera';
 
 const ANNOTATION_KINDS: { id: AnnotationKind; label: string; hint: string }[] = [
   { id: 'text', label: 'Text', hint: 'Click to place a label' },
@@ -26,7 +30,8 @@ export function ToolOptionsBar() {
   const annotationKind = useEditor((s) => s.annotationKind);
   const annotationColor = useEditor((s) => s.annotationColor);
   const marqueeMode = useEditor((s) => s.marqueeMode);
-  const regionMode = useEditor((s) => s.regionMode);
+  const activeSectorId = useEditor((s) => s.activeSectorId);
+  const addSector = useEditor((s) => s.addSector);
   const activeEmpireId = useEditor((s) => s.activeEmpireId);
   const setActiveEmpire = useEditor((s) => s.setActiveEmpire);
   const addNebula = useEditor((s) => s.addNebula);
@@ -282,33 +287,69 @@ export function ToolOptionsBar() {
       );
       break;
 
-    case 'region':
-      body = (
-        <>
-          <div className="opt-seg">
-            <button
-              className={`seg-btn${regionMode === 'area' ? ' active' : ''}`}
-              title="Draw the sector's boundary"
-              onClick={() => setToolOptions({ regionMode: 'area' })}
+    case 'region': {
+      const active = activeSectorId ? map.regions[activeSectorId] : null;
+      return (
+        <div className="opt-bar">
+          <label className="opt">
+            <span>Sector</span>
+            <select
+              value={activeSectorId ?? ''}
+              onChange={(e) =>
+                setToolOptions({ activeSectorId: e.target.value || null })
+              }
             >
-              ⬠ Area
-            </button>
-            <button
-              className={`seg-btn${regionMode === 'label' ? ' active' : ''}`}
-              title="Just a wide name across the map"
-              onClick={() => setToolOptions({ regionMode: 'label' })}
-            >
-              A Label
-            </button>
-          </div>
+              <option value="">— new —</option>
+              {sectorTree(map).map(({ region, depth }) => (
+                <option key={region.id} value={region.id}>
+                  {'\u00a0'.repeat(depth * 3)}
+                  {region.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="mini-btn"
+            title={
+              selection.length > 0
+                ? `Make a sector from the ${selection.length} selected systems`
+                : 'Make an empty sector'
+            }
+            onClick={() =>
+              addSector(
+                selection,
+                selection.length
+                  ? undefined
+                  : // An empty sector has no members to sit on, so it parks its
+                    // label in the middle of the view where it can be seen.
+                    { x: liveCamera.x, y: liveCamera.y, size: Math.max(12, 46 / liveCamera.zoom) }
+              )
+            }
+          >
+            + New{selection.length > 0 ? ` from ${selection.length}` : ''}
+          </button>
+          {active && (
+            <>
+              <label className="opt">
+                <span>Colour</span>
+                <ColorSwatch
+                  value={active.color ?? '#c9d6f2'}
+                  onChange={(hex) =>
+                    updateEnt('regions', active.id, { color: hex })
+                  }
+                />
+              </label>
+              <span className="opt-hint">
+                {countMembers(map, active.id)} systems
+              </span>
+            </>
+          )}
           <span className="opt-hint">
-            {regionMode === 'area'
-              ? 'Drag a loop around the sector — it closes itself'
-              : 'Click to drop a sector name'}
+            Click or drag across systems to put them in · Alt takes them out
           </span>
-        </>
+        </div>
       );
-      break;
+    }
 
     case 'connect':
       body = (
@@ -328,4 +369,9 @@ export function ToolOptionsBar() {
   }
 
   return <div className="opt-bar">{body}</div>;
+}
+
+/** How many systems a sector holds, counting the ones nested inside it. */
+function countMembers(map: GalaxyMap, id: string): number {
+  return sectorSystems(map, id).length;
 }

@@ -4,6 +4,7 @@ import {
   STATUS_TYPES,
   STATUS_INDEX,
   statusOf,
+  occupierOf,
   makePatternTile,
 } from '../model/status';
 import { Camera } from './camera';
@@ -347,31 +348,48 @@ export class TerritoryRenderer {
     // *which* of its systems owns a cell — but only for empires that actually
     // mix statuses, which is the rare case. For those we rerun the same field
     // per status subgroup and take the strongest.
-    const statusIdx = new Int8Array(px); // 0 = core
+    const statusIdx = new Int16Array(px); // 0 = plain core, else a zone slot
     const zoneTmp = new Int16Array(px);
+    /** "empireIdx|slot" -> "statusIdx|occupierId" */
+    const zoneKeys = new Map<string, string>();
     for (let e = 0; e < K; e++) {
       const list = byEmpire.get(empireIds[e])!;
-      const groups = new Map<number, System[]>();
+      // Grouped by status *and* occupier: "occupied by A" and "occupied by B"
+      // are different zones inside the same empire, drawn in different colours,
+      // so they cannot share a field pass.
+      const groups = new Map<string, System[]>();
       for (const s of list) {
         const si = STATUS_INDEX[statusOf(s)] ?? 0;
-        const arr = groups.get(si) ?? [];
+        const key = `${si}|${occupierOf(s) ?? ''}`;
+        const arr = groups.get(key) ?? [];
         arr.push(s);
-        groups.set(si, arr);
+        groups.set(key, arr);
       }
-      if (groups.size <= 1) {
-        const only = [...groups.keys()][0] ?? 0;
-        if (only !== 0) {
-          for (let p = 0; p < px; p++) if (smooth[p] === e) statusIdx[p] = only;
+      // Each distinct (status, occupier) pair gets a slot; the grid stores the
+      // slot index, and `zoneKeys` maps it back.
+      const keys = [...groups.keys()];
+      const slotOf = (k: string) => keys.indexOf(k) + 1; // 0 stays "plain core"
+      for (const k of keys) zoneKeys.set(`${e}|${slotOf(k)}`, k);
+
+      if (groups.size === 1) {
+        const only = keys[0];
+        if (!only.startsWith('0|')) {
+          const slot = slotOf(only);
+          for (let p = 0; p < px; p++) if (smooth[p] === e) statusIdx[p] = slot;
         }
         continue;
       }
       const bestStatus = new Float32Array(px);
-      for (const [si, sub] of groups) {
+      for (const [k, sub] of groups) {
+        const slot = slotOf(k);
         const fd = this.influenceField(sub, minX, minY, ppw, rw, rh);
         for (let i = 0, p = 0; p < px; i += 4, p++) {
           if (smooth[p] !== e) continue;
           const v = fd[i];
-          if (v > bestStatus[p]) { bestStatus[p] = v; statusIdx[p] = si; }
+          if (v > bestStatus[p]) {
+            bestStatus[p] = v;
+            statusIdx[p] = k.startsWith('0|') ? 0 : slot;
+          }
         }
       }
     }
@@ -382,21 +400,32 @@ export class TerritoryRenderer {
       for (let p = 0; p < px; p++) {
         if (smooth[p] === e && statusIdx[p] !== 0) present.add(statusIdx[p]);
       }
-      for (const si of present) {
+      for (const slot of present) {
         for (let p = 0; p < px; p++) {
-          zoneTmp[p] = smooth[p] === e && statusIdx[p] === si ? e : -1;
+          zoneTmp[p] = smooth[p] === e && statusIdx[p] === slot ? e : -1;
         }
         const path = this.traceRegion(zoneTmp, rw, rh, e, minX, minY, ppw);
         if (!path) continue;
+        const key = zoneKeys.get(`${e}|${slot}`) ?? '0|';
+        const si = Number(key.split('|')[0]) || 0;
+        const occId = key.split('|')[1];
         const st = STATUS_TYPES[si];
+        if (!st) continue;
         const [r, g, b] = empireRgb[e];
         const [br, bg, bb] = borderRgb[e];
+        // The territory keeps the owner's fill and border; only the hatch
+        // takes the occupier's colour. That is what makes a map read as
+        // "still theirs, but somebody else is sitting on it".
+        const occ = occId ? empires[occId] : undefined;
+        const hatchRgb: [number, number, number] = occ
+          ? hexToRgb(occ.borderColor ?? occ.color)
+          : [br, bg, bb];
         this.zones.push({
           path,
           tile: makePatternTile(
             st.pattern,
-            [br, bg, bb],
-            Math.min(0.85, this.display.fillAlpha * st.weight * 3)
+            hatchRgb,
+            Math.min(0.9, this.display.fillAlpha * st.weight * (occ ? 4.5 : 3))
           ),
           pattern: null,
           fill: `rgba(${r},${g},${b},${Math.min(0.5, this.display.fillAlpha * st.weight)})`,

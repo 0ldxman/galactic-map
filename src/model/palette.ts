@@ -10,6 +10,12 @@ export const NEBULA_PALETTE = [
   '#8f3fa0', '#3f5fa0', '#a0863f',
 ];
 
+/** Starting colours for new sectors — pale, so they read as chart notation. */
+export const SECTOR_PALETTE = [
+  '#c9d6f2', '#8fd4ff', '#a8f0b8', '#ffe08f', '#cfa8ff',
+  '#ffa8d8', '#8fe6d8', '#ffc08f',
+];
+
 /**
  * The swatches offered by the colour picker. Four rows that walk the hue
  * circle at three brightnesses, plus a neutral row — enough to pick a

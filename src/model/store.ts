@@ -19,7 +19,8 @@ import { DisplaySettings, resolveDisplay } from './display';
 import { Op, EntColl, EntMap, applyOps, compressOps, invertOps, prevOf } from './ops';
 import { Clip } from './clipboard';
 import { OBJECT_BY_ID } from './objects';
-import { EMPIRE_PALETTE, NEBULA_PALETTE } from './palette';
+import { EMPIRE_PALETTE, NEBULA_PALETTE, SECTOR_PALETTE } from './palette';
+import { canReparent } from './sectors';
 import { makeId, Rng } from '../util/rng';
 import { systemName } from '../generation/names';
 import { makeStarCluster } from './stars';
@@ -45,9 +46,6 @@ export type SelectMode = 'replace' | 'toggle' | 'add';
 
 /** How the select tool sweeps up systems: a rectangle, or a drawn loop. */
 export type MarqueeMode = 'box' | 'lasso';
-
-/** A region is either a bare label or an outlined area (see MapRegion.shape). */
-export type RegionMode = 'label' | 'area';
 
 /** A selected non-system entity (these are edited one at a time). */
 export interface EntityRef {
@@ -89,7 +87,8 @@ export interface EditorState {
   annotationKind: AnnotationKind;
   annotationColor: string;
   marqueeMode: MarqueeMode;
-  regionMode: RegionMode;
+  /** sector the Region tool assigns systems to */
+  activeSectorId: ID | null;
   /** object being linked by the "link objects" action */
   linkFromId: ID | null;
   /**
@@ -118,7 +117,7 @@ export interface EditorState {
       annotationKind: AnnotationKind;
       annotationColor: string;
       marqueeMode: MarqueeMode;
-      regionMode: RegionMode;
+          activeSectorId: ID | null;
       linkFromId: ID | null;
     }>
   ) => void;
@@ -152,6 +151,16 @@ export interface EditorState {
   setOwnerMany: (ids: readonly ID[], ownerId: ID | null) => void;
   toggleMarker: (systemId: ID, markerId: string) => void;
   toggleMarkerMany: (ids: readonly ID[], markerId: string) => void;
+  /** Put systems in a sector, or take them out of it. */
+  setSectorMembership: (
+    ids: readonly ID[],
+    sectorId: ID,
+    member: boolean
+  ) => void;
+  /** Add where any is missing, otherwise remove everywhere (like markers). */
+  toggleSectorMany: (ids: readonly ID[], sectorId: ID) => void;
+  /** Nest a sector under another. Refused when it would make a cycle. */
+  setSectorParent: (id: ID, parentId: ID | null) => void;
 
   // --- clipboard ---
   insertClip: (clip: Clip, atX: number, atY: number) => ID[];
@@ -178,6 +187,8 @@ export interface EditorState {
   /** Remove dabs overlapping the brush (erasing). */
   eraseNebula: (id: ID, x: number, y: number, r: number) => void;
   addRegion: (x: number, y: number, opts?: Partial<MapRegion>) => ID;
+  /** A sector holding the given systems, with the tool aimed at it. */
+  addSector: (memberIds?: readonly ID[], opts?: Partial<MapRegion>) => ID;
   addObject: (x: number, y: number, opts?: Partial<SpaceObject>) => ID;
   linkObjects: (a: ID, b: ID) => void;
   addAnnotation: (a: Omit<Annotation, 'id'>) => ID;
@@ -280,7 +291,7 @@ export const useEditor = create<EditorState>((set, get) => {
     annotationKind: 'text',
     annotationColor: '#e2eaf8',
     marqueeMode: 'box',
-    regionMode: 'area',
+    activeSectorId: null,
     linkFromId: null,
     focusTarget: null,
 
@@ -479,6 +490,52 @@ export const useEditor = create<EditorState>((set, get) => {
       commit(ops);
     },
 
+    setSectorMembership: (ids, sectorId, member) => {
+      const map = get().map;
+      if (!map.regions[sectorId]) return;
+      const ops: Op[] = [];
+      for (const id of ids) {
+        const cur = map.systems[id];
+        if (!cur) continue;
+        const have = cur.sectors ?? [];
+        if (have.includes(sectorId) === member) continue;
+        const sectors = member
+          ? [...have, sectorId]
+          : have.filter((x) => x !== sectorId);
+        ops.push({ t: 'sys.set', id, patch: { sectors }, prev: { sectors: have } });
+      }
+      commit(ops);
+    },
+
+    toggleSectorMany: (ids, sectorId) => {
+      const map = get().map;
+      // If any system in the group is missing it, add it everywhere; else drop
+      // it everywhere. Same rule as the markers, for the same reason: a group
+      // action should have one obvious outcome.
+      const adding = ids.some(
+        (id) => !(map.systems[id]?.sectors ?? []).includes(sectorId)
+      );
+      get().setSectorMembership(ids, sectorId, adding);
+    },
+
+    setSectorParent: (id, parentId) => {
+      const map = get().map;
+      const cur = map.regions[id];
+      if (!cur) return;
+      // A sector inside itself (directly or through its children) would make
+      // the tree walks loop, so the model simply refuses it.
+      if (!canReparent(map, id, parentId)) return;
+      commit([
+        {
+          t: 'ent.set',
+          c: 'regions',
+          id,
+          patch: { parentId },
+          prev: { parentId: cur.parentId ?? null },
+        },
+      ]);
+    },
+
     insertClip: (clip, atX, atY) => {
       const dx = atX - clip.cx;
       const dy = atY - clip.cy;
@@ -589,6 +646,33 @@ export const useEditor = create<EditorState>((set, get) => {
       const ent = get().map[c][id];
       if (!ent) return;
       const ops: Op[] = [{ t: 'ent.del', c, ent } as Op];
+      // A deleted sector leaves memberships and child pointers dangling, so
+      // they are cleaned up in the same transaction: one undo puts it all back.
+      if (c === 'regions') {
+        for (const sys of Object.values(get().map.systems)) {
+          const have = sys.sectors ?? [];
+          if (!have.includes(id)) continue;
+          ops.push({
+            t: 'sys.set',
+            id: sys.id,
+            patch: { sectors: have.filter((x) => x !== id) },
+            prev: { sectors: have },
+          });
+        }
+        // Children move up to the deleted sector's own parent rather than
+        // being orphaned — the grouping they were nested in still exists.
+        const parentId = (ent as MapRegion).parentId ?? null;
+        for (const child of Object.values(get().map.regions)) {
+          if (child.parentId !== id) continue;
+          ops.push({
+            t: 'ent.set',
+            c: 'regions',
+            id: child.id,
+            patch: { parentId },
+            prev: { parentId: id },
+          });
+        }
+      }
       // Unlink anything pointing at a deleted object.
       if (c === 'objects') {
         for (const o of Object.values(get().map.objects)) {
@@ -610,6 +694,8 @@ export const useEditor = create<EditorState>((set, get) => {
             ? null
             : s.selectedEntity,
         activeNebulaId: c === 'nebulae' && s.activeNebulaId === id ? null : s.activeNebulaId,
+        activeSectorId:
+          c === 'regions' && s.activeSectorId === id ? null : s.activeSectorId,
       }));
     },
 
@@ -673,11 +759,57 @@ export const useEditor = create<EditorState>((set, get) => {
         size: opts?.size ?? 70,
         color: opts?.color,
         spacing: opts?.spacing ?? 0.35,
-        shape: opts?.shape,
-        fillAlpha: opts?.fillAlpha ?? (opts?.shape ? 0.1 : undefined),
+        parentId: opts?.parentId ?? null,
+        fillAlpha: opts?.fillAlpha ?? 0.08,
+        showFill: opts?.showFill ?? true,
+        showName: opts?.showName ?? true,
       };
       commit([{ t: 'ent.add', c: 'regions', ent: reg }]);
       set({ selectedEntity: { c: 'regions', id }, selection: [] });
+      return id;
+    },
+
+    addSector: (memberIds = [], opts) => {
+      const map = get().map;
+      const n = Object.keys(map.regions).length;
+      const id = makeId('reg');
+      const members = memberIds.filter((mid) => map.systems[mid]);
+      // Park the label on the members' centre of mass; once it has any, the
+      // renderer derives the position from the enclosed area anyway, so this
+      // only matters for a sector created empty.
+      let cx = 0, cy = 0;
+      for (const mid of members) {
+        cx += map.systems[mid].x;
+        cy += map.systems[mid].y;
+      }
+      if (members.length) { cx /= members.length; cy /= members.length; }
+
+      const sector: MapRegion = {
+        id,
+        name: opts?.name ?? `Sector ${n + 1}`,
+        x: opts?.x ?? cx,
+        y: opts?.y ?? cy,
+        size: opts?.size ?? 70,
+        color: opts?.color ?? SECTOR_PALETTE[n % SECTOR_PALETTE.length],
+        spacing: opts?.spacing ?? 0.35,
+        parentId: opts?.parentId ?? null,
+        fillAlpha: opts?.fillAlpha ?? 0.08,
+        showFill: opts?.showFill ?? true,
+        showName: opts?.showName ?? true,
+      };
+      const ops: Op[] = [{ t: 'ent.add', c: 'regions', ent: sector }];
+      for (const mid of members) {
+        const cur = map.systems[mid];
+        const have = cur.sectors ?? [];
+        ops.push({
+          t: 'sys.set',
+          id: mid,
+          patch: { sectors: [...have, id] },
+          prev: { sectors: have },
+        });
+      }
+      commit(ops);
+      set({ selectedEntity: { c: 'regions', id }, activeSectorId: id, selection: [] });
       return id;
     },
 

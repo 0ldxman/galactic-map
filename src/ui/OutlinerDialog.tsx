@@ -6,6 +6,9 @@ import { DisplaySettings, resolveDisplay } from '../model/display';
 import { lighten } from '../util/color';
 import { ColorSwatch } from './ColorSwatch';
 import { addImageFiles } from './addImage';
+import { sectorTree, ownSystems, sectorSystems } from '../model/sectors';
+import { liveCamera } from '../render/camera';
+import { sectorRenderer } from '../render/sectors';
 
 /** The categories the outliner can open. Empires aren't an entity collection. */
 export type OutlinerCat = 'empires' | EntColl;
@@ -37,7 +40,9 @@ export const CATEGORIES: {
     label: 'Sectors',
     icon: '◍',
     vis: 'showRegions',
-    empty: 'No sectors yet. Draw one with the Region tool (R).',
+    empty:
+      'No sectors yet. Add one below, or select some systems and press R to ' +
+      'assign them — the boundary follows whatever belongs.',
   },
   {
     id: 'objects',
@@ -87,6 +92,7 @@ export function OutlinerDialog({
   const updateEmpire = useEditor((s) => s.updateEmpire);
   const removeEmpire = useEditor((s) => s.removeEmpire);
   const addNebula = useEditor((s) => s.addNebula);
+  const addSector = useEditor((s) => s.addSector);
   const updateEnt = useEditor((s) => s.updateEnt);
   const removeEnt = useEditor((s) => s.removeEnt);
   const setDisplay = useEditor((s) => s.setDisplay);
@@ -200,14 +206,20 @@ export function OutlinerDialog({
         y: n.blobs[0]?.y ?? 0,
       }));
     } else if (coll === 'regions') {
-      list = Object.values(map.regions).map((r) => ({
-        id: r.id,
-        name: r.name,
-        color: r.color ?? '#c9d6f2',
-        sub: r.shape ? `area · ${r.shape.length} pts` : 'label',
-        x: r.x,
-        y: r.y,
-      }));
+      // Tree order with an indent, so nesting is visible in the list itself.
+      list = sectorTree(map).map(({ region, depth }) => {
+        const own = ownSystems(map, region.id).length;
+        const all = sectorSystems(map, region.id).length;
+        const shape = sectorRenderer.shapeOf(region.id);
+        return {
+          id: region.id,
+          name: `${'\u00a0'.repeat(depth * 3)}${region.name}`,
+          color: region.color ?? '#c9d6f2',
+          sub: all === 0 ? 'label' : all === own ? `${own} sys` : `${own} +${all - own}`,
+          x: shape?.cx ?? region.x,
+          y: shape?.cy ?? region.y,
+        };
+      });
     } else if (coll === 'objects') {
       list = Object.values(map.objects).map((o) => {
         const far = o.linkedId ? map.objects[o.linkedId] : null;
@@ -315,6 +327,8 @@ export function OutlinerDialog({
       ? () => addEmpire()
       : cat === 'nebulae'
         ? () => addNebula()
+        : cat === 'regions'
+          ? () => addSector([], { x: liveCamera.x, y: liveCamera.y })
         : cat === 'references'
           ? () => fileRef.current?.click()
           : null;

@@ -225,6 +225,56 @@ the game, a sketch, an older export.
   PNG export leaves them out unless the image is marked for export *and* the
   box is ticked.
 
+## Phase I — sectors, occupation, export control ✅
+
+### Sectors are membership, not drawing
+
+The drawn-boundary sectors from Phase G were the wrong model: the outline went
+stale the moment a system moved, and re-drawing it by hand was the only fix.
+A sector is now **a set of systems**, assigned the way empire ownership is.
+
+- Membership lives on the system (`System.sectors`), so a system can belong to
+  several sectors at once, and moving one between sectors is one op on one
+  entity rather than two lists that can disagree.
+- **Sectors nest** (`MapRegion.parentId`). A child's systems count as the
+  parent's, so a containing sector needn't repeat them. Cycles are refused in
+  the store, not just greyed out in the UI, because every tree walk would hang.
+- The **boundary is derived**: members are rasterised as discs, merged, and the
+  mask traced into smoothed rings — the same machinery as the empire borders,
+  which is why they look like they belong on one map. Islands and holes fall
+  out for free. Cached against `systems` and `regions` by reference.
+- The **name is sized from the enclosed area and fades with the zoom exactly
+  like an empire name**, handing off to the system cards together. A sector
+  with no members stays a plain label at its own position — which is what every
+  region on a pre-v4 map was.
+- Style per sector: colour, fill on/off with its own opacity, name on/off, name
+  size and letter spacing.
+- **v4 migration** converts a v3 drawn boundary into membership (whatever was
+  inside it joins) rather than dropping it.
+
+### The rest of this batch
+
+- **Export several empires.** The empire mode takes a checklist rather than one
+  id: an alliance, or both sides of a war, keep their own fill and border while
+  everyone else goes grey. The shot is framed around the chosen ones.
+- **Black holes are a body type**, pickable per star with a size class of their
+  own (stellar-mass → ultramassive), so a system can be a lone hole or a star
+  with one for a companion. The old "influence 0 means the galactic core, draw
+  it huge" quirk is migrated into an explicit supermassive body.
+- **Occupation names an occupier.** On an occupied or contested system the
+  territory keeps the owner's fill and border while the **hatch takes the
+  occupier's colour** — "still theirs, but somebody else is sitting on it". The
+  territory pass groups by (status, occupier), so two different occupiers
+  inside one empire are two zones. A stale id on a system whose status went
+  back to Core is ignored rather than drawn, but kept, so switching back
+  restores it.
+- **Nebula labels** got size (auto from the cloud, or fixed), colour and letter
+  spacing of their own.
+- **The legend is configurable**: which sections it lists, which empires (or
+  all of them, including outside the frame), which corner, panel scale, and a
+  backdrop that can go fully transparent. Occupied zones get their own group,
+  with the hatch drawn in the occupier's colour so the row explains the map.
+
 ## Phase E — later
 
 - **Planets** — `System.bodies: Planet[]`, shown in a separate System View

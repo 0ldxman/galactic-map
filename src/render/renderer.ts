@@ -13,6 +13,7 @@ import { EntityRef } from '../model/store';
 import { Camera } from './camera';
 import { TerritoryRenderer } from './territories';
 import { NebulaRenderer } from './nebulae';
+import { SectorRenderer, sectorLabel, sectorRenderer } from './sectors';
 import { drawObjectIcon } from './icons';
 import { drawReferences } from './references';
 import { mulberry32 } from '../util/rng';
@@ -50,8 +51,6 @@ export interface RenderOptions {
   marquee?: Marquee | null;
   /** live freehand lasso, in screen px */
   lasso?: readonly { x: number; y: number }[] | null;
-  /** region boundary being drawn, in world coordinates */
-  draftRegion?: readonly { x: number; y: number }[] | null;
   /**
    * Tracing references. Left undefined they follow the map's display setting,
    * which is what the editor wants; an export or a guest's view passes `false`
@@ -84,11 +83,23 @@ function withAlpha(hex: string, a: number): string {
 export class Renderer {
   readonly territory = new TerritoryRenderer();
   readonly nebulae = new NebulaRenderer();
+  /**
+   * The live view uses the shared instance so panels can read the derived
+   * outlines; an export builds its own, exactly as it does for territories,
+   * so rendering one never disturbs what is on screen.
+   */
+  readonly sectors: SectorRenderer;
+
+  constructor(shared = false) {
+    this.sectors = shared ? sectorRenderer : new SectorRenderer();
+    this.init();
+  }
+
   private bgStars: BgStar[] = [];
   // Pre-rendered soft glow sprite per star colour (drawn additively per star).
   private glowSprites: Record<string, HTMLCanvasElement> = {};
 
-  constructor() {
+  private init() {
     for (const [type, color] of Object.entries(STAR_COLORS)) {
       if (type === 'blackhole') continue;
       this.glowSprites[type] = makeGlowSprite(color);
@@ -152,16 +163,25 @@ export class Renderer {
       });
     }
 
-    // Region boundaries: chart notation drawn over the political fill, under
+    // Sector boundaries: chart notation drawn over the political fill, under
     // the stars, so a sector reads as a line on the map rather than terrain.
-    if (dsp.showRegions) this.drawRegionAreas(ctx, map, cam, opts);
+    // The outline is derived from which systems belong to it, not drawn.
+    this.sectors.update(map, opts.deferTerritory);
+    if (dsp.showRegions) {
+      this.sectors.draw(
+        ctx,
+        map,
+        cam,
+        opts.selectedEntity?.c === 'regions' ? opts.selectedEntity.id : null,
+        dsp
+      );
+    }
 
     // --- Systems: cull to the viewport once, reuse the screen positions. ---
     const margin = 30;
     type SP = { s: System; p: { x: number; y: number } };
     const buckets = new Map<string, SP[]>();
     const capitals: SP[] = [];
-    const blackholes: SP[] = [];
     const onScreen: SP[] = [];
 
     for (const s of systems) {
@@ -169,7 +189,6 @@ export class Renderer {
       if (p.x < -margin || p.x > w + margin || p.y < -margin || p.y > h + margin) continue;
       const sp = { s, p };
       onScreen.push(sp);
-      if (s.starType === 'blackhole') { blackholes.push(sp); continue; }
       const isCapital = map.empires[s.ownerId ?? '']?.capitalId === s.id;
       if (isCapital) { capitals.push(sp); continue; }
       const arr = buckets.get(s.starType) ?? [];
@@ -203,9 +222,14 @@ export class Renderer {
     // move in and shrink into specks when you pull the camera out — like real
     // objects gaining/losing apparent size with distance.
     const bodyBuckets = new Map<StarType, number[]>();
+    // Black holes are laid out with the rest of the cluster but drawn by their
+    // own routine (accretion disk, event horizon), so they are collected
+    // separately instead of being pushed through the coloured-dot path.
+    const holeDots: StarDot[] = [];
     for (const list of buckets.values()) {
       for (const sp of list) {
         for (const pos of layoutStars(sp, STAR_WORLD_R, cam.zoom)) {
+          if (pos.type === 'blackhole') { holeDots.push(pos); continue; }
           let arr = bodyBuckets.get(pos.type);
           if (!arr) { arr = []; bodyBuckets.set(pos.type, arr); }
           arr.push(pos.x, pos.y, pos.r);
@@ -247,7 +271,7 @@ export class Renderer {
       if (dsp.showStarGlow) {
         ctx.globalCompositeOperation = 'lighter';
         for (const d of dots) {
-          if (d.r < GLOW_MIN) continue;
+          if (d.type === 'blackhole' || d.r < GLOW_MIN) continue;
           const sprite = this.glowSprites[d.type];
           if (!sprite) continue;
           const gr = d.r * GLOW_SCALE;
@@ -256,6 +280,7 @@ export class Renderer {
         ctx.globalCompositeOperation = 'source-over';
       }
       for (const d of dots) {
+        if (d.type === 'blackhole') { holeDots.push(d); continue; }
         ctx.fillStyle = STAR_COLORS[d.type];
         ctx.beginPath();
         ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
@@ -268,9 +293,9 @@ export class Renderer {
       ctx.stroke();
     }
 
-    for (const { s, p } of blackholes) {
-      this.drawBlackHole(ctx, p.x, p.y, cam.zoom, s.influence === 0);
-    }
+    // Black holes last among the bodies, so their glow sits over the stars a
+    // multiple system might pair them with.
+    for (const d of holeDots) this.drawBlackHole(ctx, d.x, d.y, d.r);
 
     // Selection / pending-connection highlight.
     const selected = new Set(opts.selection);
@@ -307,7 +332,7 @@ export class Renderer {
 
     // --- Empire labels at region centroids (main territory + each enclave). ---
     if (dsp.showEmpireNames) this.drawEmpireLabels(ctx, map, cam, dsp);
-    if (dsp.showRegions) this.drawRegionLabels(ctx, map, cam, opts);
+    if (dsp.showRegions) this.drawRegionLabels(ctx, map, cam, opts, dsp);
     if (dsp.showNebulae) this.drawNebulaLabels(ctx, map, cam);
 
     if (opts.brush) {
@@ -430,92 +455,52 @@ export class Renderer {
   }
 
   /**
-   * The outlined kind of region: a drawn boundary with a faint wash inside.
-   * Regions that are only a label have no `shape` and are skipped here.
+   * Sector names.
+   *
+   * A sector with members is sized from the area it encloses and fades out as
+   * you zoom in, exactly like an empire name — they are the same kind of thing
+   * (a label for a region of space), so they behave the same and hand off to
+   * the system name cards together. A sector with no members is a plain label
+   * at its own position and its own size, which is what a region was before
+   * membership existed.
    */
-  private drawRegionAreas(
-    ctx: CanvasRenderingContext2D,
-    map: GalaxyMap,
-    cam: Camera,
-    opts: RenderOptions
-  ) {
-    const sel =
-      opts.selectedEntity?.c === 'regions' ? opts.selectedEntity.id : null;
-    const shapes: { pts: readonly { x: number; y: number }[]; color: string; fill: number; selected: boolean }[] = [];
-    for (const r of Object.values(map.regions)) {
-      if (!r.shape || r.shape.length < 3) continue;
-      shapes.push({
-        pts: r.shape,
-        color: r.color ?? '#c9d6f2',
-        fill: r.fillAlpha ?? 0.1,
-        selected: r.id === sel,
-      });
-    }
-    if (opts.draftRegion && opts.draftRegion.length >= 2) {
-      shapes.push({ pts: opts.draftRegion, color: '#9fb4ff', fill: 0.08, selected: true });
-    }
-    if (shapes.length === 0) return;
-
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    for (const s of shapes) {
-      ctx.beginPath();
-      for (let i = 0; i < s.pts.length; i++) {
-        const p = cam.worldToScreen(s.pts[i].x, s.pts[i].y);
-        if (i === 0) ctx.moveTo(p.x, p.y);
-        else ctx.lineTo(p.x, p.y);
-      }
-      ctx.closePath();
-      if (s.fill > 0) {
-        ctx.fillStyle = withAlpha(s.color, s.fill);
-        ctx.fill();
-      }
-      ctx.strokeStyle = withAlpha(s.color, s.selected ? 0.95 : 0.5);
-      ctx.lineWidth = s.selected ? 2 : 1.2;
-      ctx.setLineDash([9, 6]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      if (s.selected) {
-        ctx.fillStyle = '#ffffff';
-        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-        ctx.lineWidth = 1;
-        for (const w of s.pts) {
-          const p = cam.worldToScreen(w.x, w.y);
-          ctx.beginPath();
-          ctx.rect(p.x - 3, p.y - 3, 6, 6);
-          ctx.fill();
-          ctx.stroke();
-        }
-      }
-    }
-  }
-
-  /** Sparse wide labels for named sectors and clusters. */
   private drawRegionLabels(
     ctx: CanvasRenderingContext2D,
     map: GalaxyMap,
     cam: Camera,
-    opts: RenderOptions
+    opts: RenderOptions,
+    dsp: DisplaySettings
   ) {
     const regions = Object.values(map.regions);
     if (regions.length === 0) return;
     const sel =
       opts.selectedEntity?.c === 'regions' ? opts.selectedEntity.id : null;
+
+    const hideAt = dsp.systemNameZoom * 1.3;
+    const zoomFade = clamp((hideAt - cam.zoom) / (hideAt * 0.42), 0, 1);
+
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (const r of regions) {
-      const fontPx = r.size * cam.zoom;
+      if (r.showName === false) continue;
+      const shape = this.sectors.shapeOf(r.id);
+      const lab = sectorLabel(r, shape);
+      const fontPx = lab.size * cam.zoom;
       if (fontPx < 4) continue;
-      const p = cam.worldToScreen(r.x, r.y);
+      // Only a sector that encloses something fades with the zoom; a bare
+      // label is furniture the author placed and stays put.
+      const fade = shape ? zoomFade : 1;
+      const op = clamp((fontPx - 4) / 6, 0, 1) * 0.8 * fade;
+      if (op <= 0.03) continue;
+
+      const p = cam.worldToScreen(lab.x, lab.y);
       ctx.font = REGION_LABEL_FONT.replace('%PX', fontPx.toFixed(1));
       ctx.letterSpacing = `${(r.spacing ?? 0.35) * fontPx}px`;
-      const op = clamp((fontPx - 4) / 6, 0, 1) * 0.75;
       ctx.fillStyle = withAlpha(r.color ?? '#c9d6f2', op);
       ctx.fillText(r.name, p.x, p.y);
-      // An outlined region already shows its selection as a highlighted
-      // boundary; only a bare label needs a box drawn round the text.
-      if (r.id === sel && !r.shape) {
+      // A sector already shows its selection as a highlighted boundary; only a
+      // bare label needs a box drawn round the text.
+      if (r.id === sel && !shape) {
         const wdt = ctx.measureText(r.name).width;
         ctx.strokeStyle = 'rgba(255,255,255,0.8)';
         ctx.lineWidth = 1;
@@ -546,11 +531,14 @@ export class Renderer {
       }
       if (sw === 0) continue;
       const p = cam.worldToScreen(sx / sw, sy / sw);
-      const fontPx = clamp(maxR * 0.5 * cam.zoom, 0, 60);
+      // The author's size wins when set; otherwise it follows the cloud, which
+      // is what you want before you have thought about it at all.
+      const worldSize = n.nameSize ?? maxR * 0.5;
+      const fontPx = clamp(worldSize * cam.zoom, 0, 220);
       if (fontPx < 7) continue;
       ctx.font = REGION_LABEL_FONT.replace('%PX', fontPx.toFixed(1));
-      ctx.letterSpacing = `${fontPx * 0.2}px`;
-      ctx.fillStyle = withAlpha(n.color, 0.75);
+      ctx.letterSpacing = `${fontPx * (n.nameSpacing ?? 0.2)}px`;
+      ctx.fillStyle = withAlpha(n.nameColor ?? n.color, 0.75);
       ctx.fillText(n.name, p.x, p.y);
       ctx.letterSpacing = '0px';
     }
@@ -769,7 +757,6 @@ export class Renderer {
     const padX = 6;
     const boxH = 16;
     for (const { s, p } of onScreen) {
-      if (s.starType === 'blackhole') continue;
       const tw = ctx.measureText(s.name).width;
       const boxW = tw + padX * 2;
       const cx = p.x;
@@ -833,10 +820,15 @@ export class Renderer {
   }
 
   /** Accretion disk + event horizon for a black hole. */
+  /**
+   * Accretion disk + event horizon. `R` is the event-horizon radius in screen
+   * px, which the caller derives from the body's size class exactly as it does
+   * for a star — so a stellar-mass hole is a speck and a supermassive one
+   * dominates its system.
+   */
   private drawBlackHole(
-    ctx: CanvasRenderingContext2D, x: number, y: number, zoom: number, big: boolean
+    ctx: CanvasRenderingContext2D, x: number, y: number, R: number
   ) {
-    const R = big ? Math.max(11, 30 * zoom) : Math.max(2.4, 4 * zoom);
     const halo = ctx.createRadialGradient(x, y, R * 0.6, x, y, R * 4);
     halo.addColorStop(0, 'rgba(120,80,180,0.28)');
     halo.addColorStop(0.5, 'rgba(90,50,140,0.13)');
@@ -937,6 +929,7 @@ const CAPITAL_WORLD_R = 2.5;
 const STAR_MIN_PX = 0.55;
 // Glow: halo radius as a multiple of the core radius; skip tiny far-out stars.
 const GLOW_SCALE = 3.4;
+const HOLE_SCALE = 2.6;
 const GLOW_MIN = 1.6; // px: skip glow for far-out specks (keeps overview cheap)
 
 /** A soft radial glow sprite tinted by `color`, used additively per star. */
@@ -992,10 +985,13 @@ function layoutStars(
     const [bx, by] = starBaseOffset(i, n);
     const ox = bx * spreadW + (n > 1 ? b.jx * jitW : 0);
     const oy = by * spreadW + (n > 1 ? b.jy * jitW : 0);
+    // A black hole's event horizon reads as a bigger object than a star dot of
+    // the same class — that is the whole visual point of one.
+    const scale = b.type === 'blackhole' ? HOLE_SCALE : 1;
     out.push({
       x: sp.p.x + ox * zoom,
       y: sp.p.y + oy * zoom,
-      r: Math.max(STAR_MIN_PX, radW[i] * zoom),
+      r: Math.max(STAR_MIN_PX, radW[i] * zoom * scale),
       type: b.type,
     });
   }

@@ -5,7 +5,7 @@ import { useEditor } from '../model/store';
 import { STATUS_BY_ID, statusOf } from '../model/status';
 import { MARKER_BY_ID } from '../model/markers';
 import { OBJECT_BY_ID } from '../model/objects';
-import { pointInPolygon } from '../util/geom';
+import { sectorSystems, sectorDepth } from '../model/sectors';
 
 function Markdown({ text }: { text?: string }) {
   const html = useMemo(
@@ -36,11 +36,14 @@ export function ViewerCard({ onClose }: { onClose: () => void }) {
   if (!sys && !ent) return null;
 
   const owner = sys?.ownerId ? map.empires[sys.ownerId] : null;
-  const region = sys
-    ? Object.values(map.regions).find(
-        (r) => r.shape && r.shape.length >= 3 && pointInPolygon(sys.x, sys.y, r.shape)
-      )
-    : null;
+  // A system can be in several sectors; a reader wants the innermost naming,
+  // so the deepest one is shown and the rest follow it.
+  const sectors = sys
+    ? (sys.sectors ?? [])
+        .map((id) => map.regions[id])
+        .filter(Boolean)
+        .sort((a, b) => sectorDepth(map, b.id) - sectorDepth(map, a.id))
+    : [];
   // Objects sitting in this system are part of what is there, so they are
   // listed rather than needing a second tap to discover.
   const here = sys
@@ -71,10 +74,10 @@ export function ViewerCard({ onClose }: { onClose: () => void }) {
               <b>{STATUS_BY_ID[statusOf(sys)]?.label ?? 'Core'}</b>
             </div>
           )}
-          {region && (
+          {sectors.length > 0 && (
             <div className="kv">
-              <span>Sector</span>
-              <b>{region.name}</b>
+              <span>{sectors.length > 1 ? 'Sectors' : 'Sector'}</span>
+              <b>{sectors.map((r) => r.name).join(' · ')}</b>
             </div>
           )}
           {!!sys.markers?.length && (
@@ -132,15 +135,7 @@ export function ViewerCard({ onClose }: { onClose: () => void }) {
           {selectedEntity.c === 'regions' && (
             <div className="kv">
               <span>Systems</span>
-              <b>
-                {(() => {
-                  const r = map.regions[selectedEntity.id];
-                  if (!r.shape) return '—';
-                  return Object.values(map.systems).filter((s) =>
-                    pointInPolygon(s.x, s.y, r.shape!)
-                  ).length;
-                })()}
-              </b>
+              <b>{sectorSystems(map, selectedEntity.id).length}</b>
             </div>
           )}
           <Markdown text={'notes' in ent ? (ent.notes as string) : undefined} />

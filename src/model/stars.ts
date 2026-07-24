@@ -16,6 +16,24 @@ export const STAR_SIZES: StarSize[] = [
   { id: 'giant', label: 'Giant', mult: 1.3 },
   { id: 'supergiant', label: 'Supergiant', mult: 1.7 },
 ];
+
+/**
+ * Size labels for a black hole. Same ids and multipliers as the star sizes —
+ * a black hole is drawn by the same layout code and needs a size class like
+ * anything else — but "Main sequence" is nonsense for one, so the picker uses
+ * these names when the body is a black hole.
+ */
+export const HOLE_SIZE_LABELS: Record<string, string> = {
+  dwarf: 'Stellar-mass',
+  main: 'Intermediate',
+  giant: 'Supermassive',
+  supergiant: 'Ultramassive',
+};
+
+export function sizeLabel(type: StarType, sizeId: string): string {
+  if (type === 'blackhole') return HOLE_SIZE_LABELS[sizeId] ?? sizeId;
+  return STAR_SIZE_BY_ID[sizeId]?.label ?? sizeId;
+}
 export const STAR_SIZE_BY_ID: Record<string, StarSize> = Object.fromEntries(
   STAR_SIZES.map((s) => [s.id, s])
 );

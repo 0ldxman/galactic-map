@@ -8,7 +8,7 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
       ['B', 'Paint the active empire'],
       ['E', 'Erase'],
       ['N', 'Paint a nebula (Alt flips paint / erase)'],
-      ['R', 'Draw a sector boundary, or drop a name'],
+      ['R', 'Assign systems to a sector (Alt removes)'],
       ['O', 'Place a special object'],
       ['T', 'Annotate — text, arrows, areas'],
     ],

@@ -108,6 +108,7 @@ export function generateGalaxy(params: GenerateParams): GalaxyMap {
     starType: 'blackhole',
     ownerId: null,
     influence: 0,
+    stars: [{ type: 'blackhole', size: 'supergiant', jx: 0, jy: 0 }],
   };
 
   return {

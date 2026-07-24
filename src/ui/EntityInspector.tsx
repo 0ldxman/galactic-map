@@ -1,7 +1,14 @@
 import { useEditor, EntityRef } from '../model/store';
 import { AnnotationKind, ObjectKind } from '../model/types';
 import { OBJECT_TYPES, OBJECT_BY_ID } from '../model/objects';
-import { pointInPolygon } from '../util/geom';
+import {
+  ownSystems,
+  sectorSystems,
+  childSectors,
+  sectorAncestors,
+  sectorTree,
+  canReparent,
+} from '../model/sectors';
 import { Notes } from './Notes';
 import { ColorSwatch } from './ColorSwatch';
 import { getImage } from '../render/references';
@@ -23,6 +30,10 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
   const linkFromId = useEditor((s) => s.linkFromId);
   const setToolOptions = useEditor((s) => s.setToolOptions);
   const focusOn = useEditor((s) => s.focusOn);
+  const selection = useEditor((s) => s.selection);
+  const setSelection = useEditor((s) => s.setSelection);
+  const setSectorMembership = useEditor((s) => s.setSectorMembership);
+  const setSectorParent = useEditor((s) => s.setSectorParent);
 
   const ent = map[sel.c][sel.id];
   if (!ent) return null;
@@ -109,17 +120,85 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
           >
             ⟳ New pattern
           </button>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={n.showName}
-              onChange={(e) =>
-                updateEnt('nebulae', n.id, { showName: e.target.checked })
-              }
-            />
-            <span>Show name</span>
-          </label>
         </div>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={n.showName}
+            onChange={(e) =>
+              updateEnt('nebulae', n.id, { showName: e.target.checked })
+            }
+          />
+          <span>Show the name</span>
+        </label>
+        {n.showName && (
+          <>
+            <label className="field">
+              <span>
+                Name size:{' '}
+                {n.nameSize === undefined
+                  ? 'from the cloud'
+                  : Math.round(n.nameSize)}
+              </span>
+              <input
+                type="range"
+                min={10}
+                max={600}
+                value={n.nameSize ?? defaultNebulaNameSize(n)}
+                onChange={(e) =>
+                  updateEnt('nebulae', n.id, { nameSize: Number(e.target.value) })
+                }
+              />
+            </label>
+            <div className="btn-row">
+              {n.nameSize !== undefined && (
+                <button
+                  className="mini-btn"
+                  title="Size it from the cloud again"
+                  onClick={() =>
+                    updateEnt('nebulae', n.id, { nameSize: undefined })
+                  }
+                >
+                  Auto size
+                </button>
+              )}
+            </div>
+            <label className="field">
+              <span>Letter spacing: {(n.nameSpacing ?? 0.2).toFixed(2)}</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={n.nameSpacing ?? 0.2}
+                onChange={(e) =>
+                  updateEnt('nebulae', n.id, {
+                    nameSpacing: Number(e.target.value),
+                  })
+                }
+              />
+            </label>
+            <div className="field">
+              <span>Name colour</span>
+              <ColorSwatch
+                value={n.nameColor ?? n.color}
+                onChange={(hex) =>
+                  updateEnt('nebulae', n.id, { nameColor: hex })
+                }
+              />
+              {n.nameColor && (
+                <button
+                  className="mini-btn"
+                  onClick={() =>
+                    updateEnt('nebulae', n.id, { nameColor: undefined })
+                  }
+                >
+                  Follow the gas
+                </button>
+              )}
+            </div>
+          </>
+        )}
         <div className="panel-note">
           {n.blobs.length} brush dabs. Texture 0 gives the plain soft cloud;
           higher values tear it into filaments.
@@ -134,11 +213,15 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
 
   if (sel.c === 'regions') {
     const r = map.regions[sel.id];
-    const inside = r.shape
-      ? Object.values(map.systems).filter((s) =>
-          pointInPolygon(s.x, s.y, r.shape!)
-        )
-      : [];
+    const own = ownSystems(map, r.id);
+    const all = sectorSystems(map, r.id);
+    const kids = childSectors(map, r.id);
+    const parents = sectorAncestors(map, r.id);
+    // Only sectors that can legally become the parent are offered, which is
+    // every sector that is not this one or somewhere inside it.
+    const parentChoices = sectorTree(map).filter(({ region }) =>
+      canReparent(map, r.id, region.id)
+    );
     return (
       <div className="panel">
         {header}
@@ -149,78 +232,153 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
             onChange={(e) => updateEnt('regions', r.id, { name: e.target.value })}
           />
         </label>
-        {r.shape ? (
-          <>
-            <div className="kv">
-              <span>Systems inside</span>
-              <b>{inside.length}</b>
-            </div>
-            <label className="field">
-              <span>Area fill: {(r.fillAlpha ?? 0.1).toFixed(2)}</span>
-              <input
-                type="range"
-                min={0}
-                max={0.4}
-                step={0.01}
-                value={r.fillAlpha ?? 0.1}
-                onChange={(e) =>
-                  updateEnt('regions', r.id, {
-                    fillAlpha: Number(e.target.value),
-                  })
-                }
-              />
-            </label>
-            <div className="btn-row">
-              <button
-                className="mini-btn"
-                title="Keep the name, drop the boundary"
-                onClick={() => updateEnt('regions', r.id, { shape: undefined })}
-              >
-                Drop the outline
-              </button>
-            </div>
-            <div className="panel-note">
-              Drag the handles to reshape it, or drag inside to move the whole
-              sector. {r.shape.length} points.
-            </div>
-          </>
-        ) : (
-          <div className="panel-note">
-            A bare label. Draw a boundary with the Region tool in Area mode to
-            make it a real sector.
+
+        <div className="kv">
+          <span>Systems</span>
+          <b>
+            {own.length}
+            {all.length !== own.length && ` (+${all.length - own.length} nested)`}
+          </b>
+        </div>
+        {parents.length > 0 && (
+          <div className="kv">
+            <span>Inside</span>
+            <b>{parents.map((p) => p.name).join(' ‹ ')}</b>
           </div>
         )}
+        {kids.length > 0 && (
+          <div className="kv">
+            <span>Contains</span>
+            <b>{kids.map((k) => k.name).join(', ')}</b>
+          </div>
+        )}
+
         <label className="field">
-          <span>Size: {Math.round(r.size)}</span>
-          <input
-            type="range"
-            min={10}
-            max={400}
-            value={r.size}
-            onChange={(e) =>
-              updateEnt('regions', r.id, { size: Number(e.target.value) })
-            }
-          />
+          <span>Nested in</span>
+          <select
+            value={r.parentId ?? ''}
+            onChange={(e) => setSectorParent(r.id, e.target.value || null)}
+          >
+            <option value="">— top level —</option>
+            {parentChoices.map(({ region, depth }) => (
+              <option key={region.id} value={region.id}>
+                {'\u00a0'.repeat(depth * 3)}
+                {region.name}
+              </option>
+            ))}
+          </select>
         </label>
-        <label className="field">
-          <span>Letter spacing: {(r.spacing ?? 0.35).toFixed(2)}</span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={r.spacing ?? 0.35}
-            onChange={(e) =>
-              updateEnt('regions', r.id, { spacing: Number(e.target.value) })
-            }
-          />
-        </label>
+
+        <div className="btn-row">
+          <button
+            className="mini-btn"
+            disabled={selection.length === 0}
+            title="Put the systems selected on the map into this sector"
+            onClick={() => setSectorMembership(selection, r.id, true)}
+          >
+            + Add {selection.length || ''} selected
+          </button>
+          <button
+            className="mini-btn"
+            disabled={selection.length === 0}
+            onClick={() => setSectorMembership(selection, r.id, false)}
+          >
+            − Remove selected
+          </button>
+        </div>
+        <div className="btn-row">
+          <button
+            className="mini-btn"
+            disabled={own.length === 0}
+            title="Select this sector's systems on the map"
+            onClick={() => setSelection(own.map((x) => x.id))}
+          >
+            Select its systems
+          </button>
+          <button
+            className="mini-btn"
+            title="Aim the Region tool at this sector"
+            onClick={() => setToolOptions({ activeSectorId: r.id })}
+          >
+            Paint into it
+          </button>
+        </div>
+
         <div className="field">
           <span>Colour</span>
           <ColorSwatch
             value={r.color ?? '#c9d6f2'}
             onChange={(hex) => updateEnt('regions', r.id, { color: hex })}
           />
+        </div>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={r.showFill !== false}
+            onChange={(e) =>
+              updateEnt('regions', r.id, { showFill: e.target.checked })
+            }
+          />
+          <span>Fill the area</span>
+        </label>
+        {r.showFill !== false && (
+          <label className="field">
+            <span>Fill opacity: {(r.fillAlpha ?? 0.08).toFixed(2)}</span>
+            <input
+              type="range"
+              min={0}
+              max={0.4}
+              step={0.01}
+              value={r.fillAlpha ?? 0.08}
+              onChange={(e) =>
+                updateEnt('regions', r.id, { fillAlpha: Number(e.target.value) })
+              }
+            />
+          </label>
+        )}
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={r.showName !== false}
+            onChange={(e) =>
+              updateEnt('regions', r.id, { showName: e.target.checked })
+            }
+          />
+          <span>Show the name</span>
+        </label>
+        {r.showName !== false && (
+          <>
+            <label className="field">
+              <span>Name size: {Math.round(r.size)}</span>
+              <input
+                type="range"
+                min={10}
+                max={400}
+                value={r.size}
+                onChange={(e) =>
+                  updateEnt('regions', r.id, { size: Number(e.target.value) })
+                }
+              />
+            </label>
+            <label className="field">
+              <span>Letter spacing: {(r.spacing ?? 0.35).toFixed(2)}</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={r.spacing ?? 0.35}
+                onChange={(e) =>
+                  updateEnt('regions', r.id, { spacing: Number(e.target.value) })
+                }
+              />
+            </label>
+          </>
+        )}
+        <div className="panel-note">
+          {all.length > 0
+            ? 'The boundary follows whichever systems belong, so it keeps up when they move. The name is sized from the area it covers and fades out as you zoom in, like an empire name.'
+            : 'No systems yet — it is just a label. Assign systems with the Region tool (R), or select some and use the button above.'}
         </div>
         <Notes
           value={r.notes}
@@ -566,4 +724,11 @@ export function EntityInspector({ entity: sel }: { entity: EntityRef }) {
       </label>
     </div>
   );
+}
+
+/** What the label size would be if the author hasn't chosen one. */
+function defaultNebulaNameSize(n: { blobs: { r: number }[] }): number {
+  let maxR = 0;
+  for (const b of n.blobs) if (b.r > maxR) maxR = b.r;
+  return Math.round(maxR * 0.5) || 40;
 }

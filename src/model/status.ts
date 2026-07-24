@@ -30,6 +30,25 @@ export function statusOf(s: { status?: OwnStatus }): OwnStatus {
 }
 
 /**
+ * Statuses that mean somebody else is present, and so can name an occupier.
+ * The others have nobody to name, and a stale id on one is ignored rather than
+ * drawn — changing the status back to Core should not leave a hatch behind.
+ */
+export const OCCUPIABLE: OwnStatus[] = ['occupied', 'contested'];
+
+export function canHaveOccupier(s: { status?: OwnStatus }): boolean {
+  return OCCUPIABLE.includes(statusOf(s));
+}
+
+/** The occupier actually in force, or null. */
+export function occupierOf(s: {
+  status?: OwnStatus;
+  occupierId?: string | null;
+}): string | null {
+  return canHaveOccupier(s) ? s.occupierId ?? null : null;
+}
+
+/**
  * A small tile of the given hatch, used as a CanvasPattern over a territory.
  * Tiles are drawn at screen scale; the renderer counteracts the camera zoom so
  * the hatch stays a constant size on screen, like the border width does.
